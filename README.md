@@ -1,4 +1,4 @@
-<div align="center">
+﻿<div align="center">
 
 <img src="docs/images/icon.png" width="84" alt="DrumQuill" />
 
@@ -23,7 +23,7 @@
 
 <br />
 
-<img src="docs/images/readme-pick.png" width="780" alt="主界面" />
+<img src="docs/images/readme-hero.png" width="780" alt="主界面" />
 
 </div>
 
