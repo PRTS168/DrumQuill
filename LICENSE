@@ -19,9 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
-=====================================================================
-重要：本仓库代码以 MIT 许可证发布，但仓库内/运行时下载的第三方
-权重与音色库有各自独立的许可证（尤其 ADTOF 权重为 CC BY-NC-SA 4.0，
-禁止商用）。第三方许可清单见 docs/third_party_licenses.md。
-=====================================================================

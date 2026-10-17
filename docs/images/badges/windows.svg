@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="141" height="22" role="img" aria-label="平台: Windows 10 / 11">
+  <title>平台: Windows 10 / 11</title>
+  <rect width="141" height="22" rx="4" fill="#334155"/>
+  <rect width="41" height="22" rx="4" fill="#3f4a5a"/>
+  <rect x="37" width="4" height="22" fill="#3f4a5a"/>
+  <g font-family="'Segoe UI','Microsoft YaHei','PingFang SC','Hiragino Sans GB','Noto Sans CJK SC','Source Han Sans SC',Helvetica,Arial,sans-serif" font-size="11.2" fill="#ffffff" text-anchor="middle">
+    <text x="20.4" y="15.2">平台</text>
+    <text x="90.8" y="15.2">Windows 10 / 11</text>
+  </g>
+</svg>
