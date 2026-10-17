@@ -1,0 +1,60 @@
+﻿# ============================================================================
+# 扒鼓谱 AI - 运行时 Python 依赖
+#
+# 安装（国内镜像，推荐）：
+#   python -m pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+#
+# 注意 1：torch 建议装 CPU 版（本机实测 torch==2.14.1+cpu）。
+#   清华镜像 PyPI 源可直接装 torch==2.14.1（CPU wheel）；
+#   如需官方 +cpu 标注版，另加参数：
+#     --index-url https://download.pytorch.org/whl/cpu
+#
+# 注意 2：ADTOF-pytorch 不在 PyPI，本文件底部已按 VCS 形式列出（pip 原生支持），
+#   首次安装需本机有 git；离线/无 git 环境可从
+#     https://github.com/xavriley/ADTOF-pytorch
+#   下载源码后 `pip install -e .`（本机锁定提交 85c192e）。
+#
+# 注意 3：bootstrap/install.ps1 会读取本文件批量安装；改版本后请同步自查一致性。
+# ============================================================================
+
+# --- Web UI / 服务 ---
+Flask==3.1.3
+Werkzeug==3.1.9
+pywebview==6.2.1
+
+# --- 音频 / 信号处理 ---
+librosa==0.11.0
+soundfile==0.14.0
+audioread==3.1.0
+pretty_midi==0.2.11.post0
+mido==1.3.3
+numpy==2.2.6
+scipy==1.15.3
+matplotlib==3.10.9
+
+# --- 鼓分离 (Demucs v4 htdemucs) 及其传递依赖（显式钉住，便于复现）---
+torch==2.14.1
+demucs==4.1.0
+einops==0.8.2
+julius==0.2.8
+lameenc==1.8.4
+# 说明：demucs 的其余传递依赖（dora-search/openunmix/submitit/jtype 等）
+# 由 pip 按 demucs 声明自动解析，这里不钉版本，避免与上游版本漂移冲突。
+
+# --- 乐谱渲染回退链（无 MuseScore 时用 reportlab 直绘 PDF）---
+# render_fallback.py 实测主链路：reportlab 直绘（不依赖 cairo）。
+# cairosvg 需要原生 libcairo-2.dll（Windows 上常缺，故 bootstrap 按可选处理）；
+# svglib 作为 SVG->PDF 备用链路保留。
+reportlab==5.0.1
+pymupdf==1.28.2
+CairoSVG==2.9.1
+svglib==2.3.0
+lxml==6.1.3
+
+# --- 其他工具 ---
+requests==2.34.2
+PyYAML==6.0.3
+tqdm==4.70.1
+
+# --- ADTOF-pytorch（鼓音转录，不在 PyPI，按锁定提交从 GitHub 安装）---
+adtof-pytorch @ git+https://github.com/xavriley/ADTOF-pytorch@85c192e78f716ea0b111cc8a5ee4a8f6a3a4f8a9

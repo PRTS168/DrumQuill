@@ -1,0 +1,68 @@
+{
+  // =========================================================================
+  // DrumQuill - 配置示例。
+  // 用法：复制本文件为同目录下的 config.json（config.json 已被 .gitignore 忽略，
+  //       不会进仓库），按需修改。所有字段均可缺省，缺省时按根目录约定探测：
+  //       venvDir 缺省 ->  <仓库根>\.venv\Scripts\pythonw.exe
+  //       modelsDir   ->  <仓库根>\models
+  //       soundDir    ->  <仓库根>\sound
+  //       dataDir     ->  <仓库根>（songs/midis/output/stems 为其子目录）
+  // 环境变量 DRUM_AI_ROOT 可整体覆盖仓库根路径。
+  // 注意：本文件为 JSONC（带 // 注释）；真正运行时读取的 config.json 请保持
+  //       纯 JSON（删掉注释行），或直接留空字段走默认值。
+  // =========================================================================
+
+  // Python 虚拟环境位置。两种写法均可：
+  //   (a) venv 根目录：C:\\Users\\<用户名>\\venvs\\drum-ai   （自动补 Scripts\pythonw.exe）
+  //   (b) pythonw.exe 完整路径：...\venvs\\drum-ai\\Scripts\\pythonw.exe
+  // 首次运行由 bootstrap\install.ps1 自动创建 <仓库根>\.venv。
+  "venvDir": "C:\\Users\\<你的用户名>\\venvs\\drum-ai",
+
+  // Demucs htdemucs 本地权重目录（含 *.th 权重与 htdemucs.yaml）。
+  // 缺省 <仓库根>\models；缺失时 install.ps1 会自动下载（约 84 MB，走镜像）。
+  "modelsDir": "C:\\<仓库根>\\models",
+
+  // MS Basic.sf3 音色库目录（约 51 MB，MuseScore 4 同款，MIT 许可）。
+  // 缺省 <仓库根>\sound；缺失时自动下载。
+  "soundDir": "C:\\<仓库根>\\sound",
+
+  // 用户数据根目录：歌曲(songs)/中间分离(stems)/MIDI(midis)/成品(output) 均在其下。
+  // 缺省 <仓库根>。想把成品放到别处可改这里。
+  "dataDir": "C:\\<仓库根>",
+
+  // MuseScore 4 命令行程序路径（用于 MusicXML->PDF 与音频渲染）。
+  // 缺省自动探测 "C:\\Program Files\\MuseScore 4\\bin\\MuseScore4.exe"；
+  // 未安装时管线自动回退到自带 SVG->PDF 渲染（见 docs\fallback_matrix.md）。
+  "museScorePath": "C:\\Program Files\\MuseScore 4\\bin\\MuseScore4.exe",
+
+  // ffmpeg 可执行文件路径（用于 WAV->MP3）。缺省按 PATH 查找；
+  // 找不到时成品音频自动保留为 WAV。
+  "ffmpegPath": "ffmpeg",
+
+  // Web UI 端口。缺省 8756；被占用时自动换 8757。
+  "port": 8756,
+
+  // Demucs 并行分段数（-j）。同时处理几段音频 = 几个独立进程，各带一份模型。
+  // 缺省 = 逻辑核数/2（4 线程机器上为 2）；设 1 可省约 0.4GB 内存但更慢。
+  // 参考（4 线程 CPU）：1 -> 40s，2 -> 31s，4 -> 31s 但内存翻倍，
+  // 所以默认 2，内存吃紧时改 1。走 GPU 时此值不生效（GPU 固定单进程）。
+  "demucsJobs": 2,
+
+  // 分离设备：auto（默认：有可用 CUDA 就用 GPU，失败自动回落 CPU）| cpu | cuda
+  // 网页「01 输入音频 → 分离设备」也能直接切，会写入这里。
+  "demucsDevice": "auto",
+
+  // GPU 运行时：装了 CUDA 版 torch + demucs 的 python.exe。
+  // 缺省自动探测 <仓库根>\.venv-gpu\Scripts\python.exe
+  //   （可用 `python -m venv .venv-gpu --system-site-packages` 继承系统已装好的 cu121 torch，
+  //     再 pip install demucs，无需重复下载 torch）
+  // 也可直接指向系统 Python（若它已带 CUDA 版 torch）：
+  //   "gpuPython": "C:\\Users\\<用户名>\\AppData\\Local\\Programs\\Python\\Python310\\python.exe"
+  "gpuPython": "",
+
+  // GPU 分离段长（秒，整数；htdemucs 上限 7.8 所以取 7）。显存紧张可降到 4。
+  "gpuSegment": 7,
+
+  // 自动测 BPM 失败时使用的兜底速度（用户也可在网页手动填）。
+  "bpmFallback": 120
+}

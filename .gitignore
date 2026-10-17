@@ -1,0 +1,59 @@
+# ---- Python 环境与缓存 ----
+.venv/
+.venv-gpu/
+venv/
+__pycache__/
+*.py[cod]
+
+# ---- 本机配置（仓库只提供 config.json.example）----
+config.json
+app/service_stamp.json
+app/task_state.json
+app/*.bak
+app/*.bak_*
+
+# ---- 日志 ----
+*.log
+
+# ---- 构建产物 ----
+dist/
+build/
+
+# ---- 开发期目录 ----
+build_work/
+tools/
+.cache/
+
+# ---- 大权重与音色库（首次运行自动下载）----
+models/*
+!models/.gitkeep
+sound/*
+!sound/.gitkeep
+
+# ---- 用户数据：歌曲 / 中间产物 / 成品 ----
+songs/*
+!songs/.gitkeep
+midis/*
+!midis/.gitkeep
+stems/*
+!stems/.gitkeep
+output/*
+!output/.gitkeep
+
+# ---- 备份与临时文件 ----
+*.bak
+*.bak_*
+*.orig
+*.tmp
+~$*
+
+# ---- 系统 ----
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# ---- 开发期截图 ----
+final_shots/
+ui_shots/
+packaging_shots/
+markers.txt
