@@ -277,7 +277,7 @@ def load_markers(path):
 
 def emit(measures, markers, n_bars):
     x = []
-    _last_tempo = [None]
+    _last_tempo = [None, 0]   # [上次速度, 上次所在小节]
     x.append('<?xml version="1.0" encoding="UTF-8"?>')
     x.append('<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 3.1 Partwise//EN" '
              '"http://www.musicxml.org/dtds/partwise.dtd">')
@@ -321,12 +321,33 @@ def emit(measures, markers, n_bars):
             except Exception:
                 bpm_bar = BPM
             prev = _last_tempo[0]
-            if prev is None or abs(bpm_bar - prev) > max(0.3, prev * 0.003):
+            last_bar = _last_tempo[1]
+            # 阈值：可见标记只给"段落级"的速度变化；其余只作播放用
+            show_all = str(os.environ.get("DRUM_SHOW_TEMPO", "")).lower() in ("1", "true", "yes")
+            if prev is None:
+                # 第 1 小节：可见的 ♩=xx
                 x.append('      <direction placement="above"><direction-type>'
-                         '<metronome parentheses="yes"><beat-unit>quarter</beat-unit>'
+                         '<metronome><beat-unit>quarter</beat-unit>'
                          '<per-minute>%.0f</per-minute></metronome></direction-type>'
                          '<sound tempo="%.1f"/></direction>' % (bpm_bar, bpm_bar))
                 _last_tempo[0] = bpm_bar
+                _last_tempo[1] = bar
+            else:
+                drift = abs(bpm_bar - prev) / prev if prev else 0.0
+                big = drift > (0.0005 if show_all else 0.015)
+                long_gap = (bar - last_bar) >= 32 and drift > 0.004
+                if big or long_gap:
+                    if show_all:
+                        # 需要看到所有变化时：可见的括号标记
+                        x.append('      <direction placement="above"><direction-type>'
+                                 '<metronome parentheses="yes"><beat-unit>quarter</beat-unit>'
+                                 '<per-minute>%.0f</per-minute></metronome></direction-type>'
+                                 '<sound tempo="%.1f"/></direction>' % (bpm_bar, bpm_bar))
+                    else:
+                        # 默认：只给播放引擎换速，谱面不留记号
+                        x.append('      <sound tempo="%.1f"/>' % bpm_bar)
+                    _last_tempo[0] = bpm_bar
+                    _last_tempo[1] = bar
         if (bar + 1) in markers:
             x.append('      <direction placement="above"><direction-type>'
                      '<words font-weight="bold">%s</words></direction-type></direction>' % markers[bar + 1])

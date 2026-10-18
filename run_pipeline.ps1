@@ -455,6 +455,7 @@ if ($LASTEXITCODE -ne 0) {
 if ($SkipScore) {
     Write-Host "[4/6] 已跳过乐谱生成（模式：只要音频/鼓声）—— 仍会校正速度与对齐，供音频合成使用。"
 } else {
+    if ("$(Cfg 'showTempoChanges' '')" -eq "true") { $env:DRUM_SHOW_TEMPO = "1" }
     if ($beatAligned -and (Test-Path $planJson)) {
         & $venvPy (Join-Path $scrDir "gen_musicxml.py") $alMid $xml $BPM "$song" "-" 4 16 $planJson
     } else {

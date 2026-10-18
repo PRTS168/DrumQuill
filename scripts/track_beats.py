@@ -55,23 +55,55 @@ def track_librosa(audio):
     return beats, [float(x) for x in downbeats], "librosa(%0.1f BPM)" % (60.0 / iv)
 
 
-def build_bars(beats, downbeats, duration):
-    """把拍点整理成小节：每小节 = 两个强拍之间（含最后一小节到结尾）。"""
-    if len(downbeats) < 2:
+def build_bars(beats, downbeats, duration, meter=None):
+    """按拍号整块切小节：每小节 meter 拍，起点对齐到第一个强拍所属的拍。"""
+    import numpy as np
+    if len(beats) < 8:
         return []
+    beats_a = np.asarray(beats, dtype=float)
+    if not meter:
+        # 先看强拍间隔里最常出现几拍
+        if len(downbeats) >= 3:
+            db = np.asarray(downbeats, dtype=float)
+            counts = []
+            for i in range(len(db) - 1):
+                inside = int(((beats_a >= db[i] - 1e-6) & (beats_a < db[i + 1] - 1e-6)).sum())
+                if inside:
+                    counts.append(inside)
+            meter = int(round(float(np.median(counts)))) if counts else 4
+        else:
+            meter = 4
+    meter = max(1, min(12, int(meter)))
+
+    # 起点：第一个强拍在拍点里的序号（找不到就用 0）
+    start_idx = 0
+    if len(downbeats) >= 1:
+        import bisect
+        start_idx = min(bisect.bisect_left(list(beats_a), downbeats[0] - 0.05), len(beats_a) - 1)
+        start_idx = max(0, start_idx)
+    idx = start_idx
     bars = []
-    for i, start in enumerate(downbeats):
-        end = downbeats[i + 1] if i + 1 < len(downbeats) else (duration or beats[-1] + 0.5)
-        inside = [b for b in beats if start - 1e-6 <= b < end - 1e-6]
-        if len(inside) < 2:
-            continue
-        span = end - start
-        beat_n = max(1, len(inside))
+    while idx + meter <= len(beats_a):
+        chunk = beats_a[idx:idx + meter]
+        span = beats_a[idx + meter] - beats_a[idx] if idx + meter < len(beats_a) else (chunk[-1] - chunk[0] + np.median(np.diff(beats_a)))
+        bar = {
+            "start": round(float(chunk[0]), 4),
+            "end": round(float(beats_a[idx + meter]) if idx + meter < len(beats_a) else float(chunk[-1] + (chunk[-1] - chunk[0]) / max(1, meter - 1)), 4),
+            "bpm": round(60.0 * meter / span, 2) if span > 0 else 0.0,
+            "beats": [round(float(b), 4) for b in chunk],
+        }
+        bars.append(bar)
+        idx += meter
+
+    # 尾部不足一小节的拍点：并入再加一个"不完整小节"（保持拍数真实，谱面会按整小节写）
+    if idx < len(beats_a):
+        chunk = beats_a[idx:]
+        span = float(chunk[-1] - chunk[0]) + (float(chunk[-1] - chunk[0]) / max(1, len(chunk) - 1) if len(chunk) > 1 else 0.5)
         bars.append({
-            "start": round(start, 4),
-            "end": round(end, 4),
-            "bpm": round(60.0 * beat_n / span, 2) if span > 0 else 0.0,
-            "beats": [round(b, 4) for b in inside],
+            "start": round(float(chunk[0]), 4),
+            "end": round(float(chunk[0]) + (float(chunk[-1] - chunk[0]) + 0.5) if len(chunk) > 1 else float(chunk[0]) + 0.5, 4),
+            "bpm": round(60.0 * len(chunk) / span, 2) if span > 0 else 0.0,
+            "beats": [round(float(b), 4) for b in chunk],
         })
     return bars
 
@@ -108,6 +140,8 @@ def main():
     if len(downbeats) < 2:
         downbeats = beats[::4]
     bars = build_bars(beats, downbeats, duration)
+    _counts = [len(b["beats"]) for b in bars]
+    meter = int(round(float(__import__("numpy").median(_counts)))) if _counts else 4
     # 每拍属于哪小节、小节内第几拍（按顺序分配，供对齐脚本直接使用）
     beat_bars, beat_positions = [], []
     i = 0

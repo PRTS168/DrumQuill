@@ -52,6 +52,9 @@
   //          false = 回到"全曲一个 BPM + 小节相位搜索"的旧路线
   "beatGrid": true,
 
+  // 谱面是否显示每一处速度变化（默认 false：只在开头标一个，其余仅作用于播放）
+  "showTempoChanges": false,
+
   // 分离设备：auto（默认：有可用 CUDA 就用 GPU，失败自动回落 CPU）| cpu | cuda
   // 网页「01 输入音频 → 分离设备」也能直接切，会写入这里。
   "demucsDevice": "auto",
