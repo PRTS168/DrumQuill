@@ -1,5 +1,24 @@
 # 更新日志
 
+## 1.1.6
+
+缓存外迁 + 一轮 bug 审查。
+
+**缓存目录迁到 G 盘**（C 盘只剩十几 G，必须让路）
+
+- PIP_CACHE_DIR / HF_HOME / TORCH_HOME / MPLCONFIGDIR / TEMP / TMP 指向 G:\cache\*
+- 旧 pip / huggingface / torch 缓存已迁移并删除；清理 C 盘 Temp 中一天前的残留
+- 效果：C 盘可用空间 12.53 GB → **16.35 GB**
+
+**审查修掉的 bug**
+
+1. `device` 参数被静默忽略：失败页「改用 CPU 重试」实际仍走 GPU。原因 start() 从未写入
+   `device_override`；已补上并验证管线日志出现「分离设备：CPU」。
+2. 队列可能并发双启：两个 status 轮询同时判定空闲会开两首。加 `_ADVANCING` 串行化。
+3. 服务重启后队列里残留 `running` 项永久卡住：启动时统一退回 `pending`。
+4. 手动重试留下的 device 覆盖会泄漏到后续队列任务：队列启动时重置。
+5. JSON 读取不容忍 BOM：手改过的 `queue.json` 会整体失效（回退成空队列）。改用 `utf-8-sig`。
+
 ## 1.1.5
 
 界面与操作体验：批量队列、预计剩余时间、失败可操作、诊断包。

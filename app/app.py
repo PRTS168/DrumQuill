@@ -553,8 +553,10 @@ def start():
     # would produce invalid MIDI tempo -> fall back to pipeline auto-detect instead.
     if bpm is not None and not (20 <= bpm <= 400):
         bpm = None
+    dev = (body.get("device") or "").strip().lower()
+    STATE["device_override"] = dev if dev in ("cpu", "cuda", "gpu") else None
     threading.Thread(target=run_job, args=(path, bpm, mode), daemon=True).start()
-    return jsonify({"ok": True, "mode": mode})
+    return jsonify({"ok": True, "mode": mode, "device": STATE["device_override"]})
 
 
 @app.route("/api/status")
@@ -1360,13 +1362,14 @@ def _write_service_stamp():
 # 批量队列 / ETA / 失败提示 / 诊断包
 # ===========================================================================
 QUEUE_FILE = os.path.join(APP_DIR, "queue.json")
+_ADVANCING = False
 STATS_FILE = os.path.join(APP_DIR, "job_stats.json")
 STAGES_N = 6
 
 
 def _read_json(path, default):
     try:
-        with open(path, encoding="utf-8") as f:
+        with open(path, encoding="utf-8-sig") as f:   # 容忍 BOM
             return json.load(f)
     except Exception:
         return default
@@ -1381,11 +1384,20 @@ def _write_json(path, data):
 
 
 def _queue_list():
+    global _ADVANCING
     q = _read_json(QUEUE_FILE, {"items": [], "paused": False})
     if not isinstance(q, dict):
         q = {"items": [], "paused": False}
     q.setdefault("items", [])
     q.setdefault("paused", False)
+    # 服务重启后，上次中断的 running 项退回 pending，避免永久卡住
+    changed = False
+    for it in q["items"]:
+        if it.get("state") == "running" and not STATE.get("running"):
+            it["state"] = "pending"
+            changed = True
+    if changed:
+        _write_json(QUEUE_FILE, q)
     return q
 
 
@@ -1402,9 +1414,19 @@ def _queue_view():
 
 def _queue_advance_if_idle():
     """任务空闲时，取下一个待处理项开跑。"""
+    global _ADVANCING
     with _lock:
-        if STATE.get("running"):
+        if STATE.get("running") or _ADVANCING:
             return
+        _ADVANCING = True
+    try:
+        _advance_body()
+    finally:
+        with _lock:
+            _ADVANCING = False
+
+
+def _advance_body():
     q = _queue_list()
     if q["paused"]:
         return
@@ -1422,6 +1444,8 @@ def _queue_advance_if_idle():
         return
     nxt["state"] = "running"
     _queue_save(q)
+    with _lock:
+        STATE["device_override"] = nxt.get("device") or None
     try:
         run_job(path, nxt.get("bpm") or None, nxt.get("mode") or "full")
     except Exception:
