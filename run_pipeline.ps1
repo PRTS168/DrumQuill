@@ -334,11 +334,11 @@ try {
         if ($LASTEXITCODE -ne 0 -or -not (Test-Path $rawMid)) {
             Write-Host "[!] 新转录器失败（exit $LASTEXITCODE），回退到 ADTOF 官方 CLI…"
             & $venvPy -m adtof_pytorch.cli --audio $drumsWavPath --out $rawMid `
-                --thresholds 0.08,0.16,0.40,0.10,0.34 --fps 100 --device cpu
+                --thresholds 0.22,0.20,0.40,0.22,0.34 --fps 100 --device cpu
         }
     } else {
         & $venvPy -m adtof_pytorch.cli --audio $drumsWavPath --out $rawMid `
-            --thresholds 0.08,0.16,0.40,0.10,0.34 --fps 100 --device cpu
+            --thresholds 0.22,0.20,0.40,0.22,0.34 --fps 100 --device cpu
     }
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path $rawMid)) {
         Write-Host "[!] 转录失败（exit $LASTEXITCODE）。建议：确认音频可正常播放；若刚发生分离失败，整曲转录耗时较长请耐心等待。"

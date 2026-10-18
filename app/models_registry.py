@@ -29,7 +29,7 @@ BUILTIN = {
         "quality": "基线",
         "stars": 4, "speed_x": 1.0, "min_vram_mb": 3000, "recommended": True,
         "measured": {"f1": 0.866, "f1_B": 0.876, "macro": 0.803, "sep_sec": 12.9, "vram_mb": 1398},
-        "adtof_thresholds": [0.08, 0.16, 0.40, 0.10, 0.34],
+        "adtof_thresholds": [0.22, 0.20, 0.40, 0.22, 0.34],
         "best_for": "速度优先（默认，4–6GB 显存最稳）",
         "root": "hybrid_transformer",
         "files": ["955717e8-8726e21a.th"],
@@ -43,7 +43,7 @@ BUILTIN = {
         "quality": "略高（+2%）",
         "stars": 4, "speed_x": 2.7, "min_vram_mb": 3500, "recommended": True,
         "measured": {"f1": 0.887, "f1_B": 0.883, "macro": 0.824, "sep_sec": 35.0, "vram_mb": 1465},
-        "adtof_thresholds": [0.08, 0.18, 0.34, 0.16, 0.38],
+        "adtof_thresholds": [0.22, 0.22, 0.36, 0.22, 0.38],
         "best_for": "整体最均衡，验证段最稳（6–12GB 推荐）",
         "root": "hybrid_transformer",
         "files": ["f7e0c4bc-ba3fe64a.th", "d12395a8-e57c48e6.th",
@@ -61,7 +61,7 @@ BUILTIN = {
         "stars": 3, "speed_x": 1.2, "min_vram_mb": 3500, "recommended": False,
         "advanced": True,
         "measured": {"f1": 0.897, "f1_B": 0.875, "macro": 0.831, "sep_sec": 15.9, "vram_mb": 1501},
-        "adtof_thresholds": [0.08, 0.08, 0.34, 0.10, 0.32],
+        "adtof_thresholds": [0.22, 0.18, 0.36, 0.22, 0.34],
         "best_for": "实验：多轨分离，底鼓/军鼓略好，稳定性一般",
         "root": "hybrid_transformer",
         "files": ["5c90dfd2-34c22ccb.th"],
@@ -76,7 +76,7 @@ BUILTIN = {
         "stars": 4, "speed_x": 3.3, "min_vram_mb": 3500, "recommended": True,
         "advanced": False,
         "measured": {"f1": 0.878, "f1_B": 0.872, "macro": 0.803, "sep_sec": 42.8, "vram_mb": 1422},
-        "adtof_thresholds": [0.08, 0.16, 0.38, 0.14, 0.48],
+        "adtof_thresholds": [0.22, 0.20, 0.38, 0.24, 0.48],
         "best_for": "MDX 系；镲片多的曲子值得试，但比默认慢 3 倍",
         "root": "mdx_final",
         "files": ["e51eebcc-c1b80bdd.th", "a1d90b5c-ae9d2452.th",
@@ -172,7 +172,7 @@ def thresholds_for(model, cfg=None):
     thr = meta.get("adtof_thresholds")
     if thr:
         return list(thr)
-    return [0.08, 0.16, 0.40, 0.10, 0.34]
+    return [0.22, 0.20, 0.40, 0.22, 0.34]
 
 
 def list_models(root, cfg):

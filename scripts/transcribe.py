@@ -37,7 +37,7 @@ except Exception as e:  # pragma: no cover
 NAMES = ["kick", "snare", "tom", "hihat", "cymbal"]
 LABELS_5 = [35, 38, 47, 42, 49]
 # 出厂阈值 = 实测扫参结果（同一首参考谱，A 段调、B 段验证，微平均 F1 提升 2~4 点）
-DEFAULT_THRESHOLDS = [0.08, 0.16, 0.40, 0.10, 0.34]
+DEFAULT_THRESHOLDS = [0.22, 0.20, 0.40, 0.22, 0.34]
 
 
 def pick_with_strength(act, thresholds, fps=100,
