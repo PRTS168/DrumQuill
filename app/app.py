@@ -718,18 +718,33 @@ def _last_device():
 
 
 def _detected_bpm():
-    """管线测速后打印 'BPM = 148'；回填给界面，省得用户自己去翻日志。"""
+    """界面显示的 BPM = 管线里**最终生效**的那个。
+
+    日志里会出现多次：
+        [*] BPM = 148              ← librosa 原始检测
+        改用 74 BPM                 ← 八度校正
+        校正为 155.98 BPM / 中位速度 73.2 BPM  ← 起音精调 / 拍栅格
+    以前取第一条，速度被校正后界面仍显示旧值。改为取出现位置最靠后的一条。
+    """
     global _BPM_RE
     try:
         import re
         if _BPM_RE is None:
-            # 日志行现在带 HH:MM:SS 前缀，所以不能锚定行首
-            _BPM_RE = re.compile(r"\[\*\] BPM = ([\d.]+)")
+            _BPM_RE = [re.compile(p) for p in (
+                r"\[\*\] BPM = ([\d.]+)",
+                r"改用 ([\d.]+) BPM",
+                r"校正为 ([\d.]+) BPM",
+                r"中位速度 ([\d.]+) BPM",
+            )]
         with open(LOG_FILE, "r", encoding="utf-8", errors="replace") as f:
             text = f.read()
-        m = _BPM_RE.search(text)
-        if m:
-            val = float(m.group(1))
+        best = None
+        for rx in _BPM_RE:
+            for m in rx.finditer(text):
+                if best is None or m.start() > best[0]:
+                    best = (m.start(), float(m.group(1)))
+        if best:
+            val = best[1]
             return int(val) if abs(val - int(val)) < 0.01 else round(val, 1)
     except Exception:
         pass

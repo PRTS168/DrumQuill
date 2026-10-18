@@ -709,6 +709,7 @@
     ['postSwing','摇摆量化量 0–0.6（0=直线量化）',false,'number','common'],
     ['adtofThresholds','转录阈值 底鼓,军鼓,嗵鼓,踩镲,吊镲（留空=按分离模型自动，越小越灵敏）',false,'text','common'],
     ['quantizeTol','量化吸附容差（占十六分音符比例 0–0.5，0=不量化，默认 0.25）',false,'number','common'],
+    ['beatGrid','节拍网格：跟踪真实拍点与强拍（关闭则退回全曲固定 BPM）',false,'bool','common'],
     ['songsDir','歌曲目录 songsDir（留空 = dataDir\\songs）',false,'text','adv'],
     ['midisDir','MIDI 目录 midisDir（留空 = dataDir\\midis）',false,'text','adv'],
     ['outputDir','输出目录 outputDir（留空 = dataDir\\output）',false,'text','adv'],
@@ -1494,9 +1495,19 @@
       var key = f[0], label = f[1], full = f[2], type = f[3];
       var val = (cfg[key] != null) ? cfg[key] : '';
       var eff = (cfg.resolved && cfg.resolved[key]) ? ('生效：'+cfg.resolved[key]) : '';
+      var ctrl;
+      if(type === 'bool'){
+        /* 布尔项：空值按"开启"处理（与后端默认一致） */
+        var on = (val === '' || val === true || val === 'true' || val === 1 || val === '1');
+        ctrl = '<select class="inp wide" id="cfg_'+key+'">' +
+               '<option value="true"'+(on?' selected':'')+'>开启</option>' +
+               '<option value="false"'+(!on?' selected':'')+'>关闭</option>' +
+               '</select>';
+      } else {
+        ctrl = '<input class="inp wide" id="cfg_'+key+'" type="'+(type||'text')+'" value="'+esc(val)+'" placeholder="（默认）">';
+      }
       return '<div class="field'+(full?' full':'')+'">' +
-        '<label>'+esc(label)+'</label>' +
-        '<input class="inp wide" id="cfg_'+key+'" type="'+(type||'text')+'" value="'+esc(val)+'" placeholder="（默认）">' +
+        '<label>'+esc(label)+'</label>' + ctrl +
         (eff ? '<span class="eff">'+esc(eff)+'</span>' : '') +
         '</div>';
     }
@@ -1659,7 +1670,8 @@
       var el = document.getElementById('cfg_'+f[0]);
       if(!el) return;
       var v = el.value.trim();
-      body[f[0]] = (v === '') ? '' : (f[3]==='number' ? Number(v) : v);
+      if(f[3] === 'bool'){ body[f[0]] = (v === 'true'); }
+      else { body[f[0]] = (v === '') ? '' : (f[3]==='number' ? Number(v) : v); }
     });
     $('#cfgMsg').textContent = '保存中…';
     fetch('/api/config', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) })
