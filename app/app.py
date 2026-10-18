@@ -5,6 +5,8 @@ Run:  python app.py   (listens on 127.0.0.1:8756)
 import os
 import io
 import json
+import platform
+import shutil
 import time
 import subprocess
 import threading
@@ -371,6 +373,7 @@ def run_job(song_path, bpm, mode="full"):
         STATE["error"] = None
         STATE["pid"] = None  # clear stale pid from previous job; set again after Popen
         STATE["service_pid"] = os.getpid()  # 记录是哪个服务实例在跑这个任务
+    STATE["audio_sec"] = _audio_seconds(song_path)
     open(LOG_FILE, "w", encoding="utf-8").close()
     write_log("%s  [0/6] 任务启动: %s（模式：%s）"
               % (time.strftime("%H:%M:%S"), os.path.basename(song_path), MODES[mode]["name"]))
@@ -382,6 +385,8 @@ def run_job(song_path, bpm, mode="full"):
            "-SongPath", song_path]
     if bpm:
         cmd += ["-BPM", str(bpm)]
+    if STATE.get("device_override"):
+        cmd += ["-Device", STATE["device_override"]]
     cmd += list(MODES[mode]["flags"])
     env = dict(os.environ)
     env["PYTHONUTF8"] = "1"
@@ -430,6 +435,8 @@ def run_job(song_path, bpm, mode="full"):
                     STATE["stage_name"] = "完成" if rc == 0 else ("失败 (exit %d)" % rc)
                     STATE["error"] = None if rc == 0 else "pipeline exit code %d" % rc
             write_log("[x/6] exit code: %d  finished: %s" % (rc, STATE["finished"]))
+            _record_run()
+            _mark_queue_state(STATE.get("song"), "done" if rc == 0 else "failed")
             _save_state()
 
     try:
@@ -555,14 +562,31 @@ def status():
     with _lock:
         # zombie guard: running=True but pipeline process already gone ->
         # flip to a clear "interrupted" state so the UI never shows a dead task as "running".
-        if STATE.get("running") and not _job_pid_alive(STATE):
+        _grace = 15.0
+        try:
+            _age = time.time() - time.mktime(time.strptime(STATE.get("started_at") or "", "%Y-%m-%d %H:%M:%S"))
+        except Exception:
+            _age = 0.0
+        if STATE.get("running") and (STATE.get("pid") or _age > _grace) and not _job_pid_alive(STATE):
             STATE["running"] = False
             STATE["pid"] = None
             STATE["finished"] = time.strftime("%Y-%m-%d %H:%M:%S")
             STATE["stage_name"] = "任务中断"
             STATE["error"] = "任务进程已退出（可能内存不足或被系统终止），中间产物已保留，可重新开始。"
             _save_state()
+            try:
+                _mark_queue_state(STATE.get("song"), "failed")
+            except Exception:
+                pass
         s = dict(STATE)
+    # 队列推进（前端每 2 秒轮询 status，顺手在这里驱动）
+    try:
+        _queue_advance_if_idle()
+    except Exception:
+        pass
+    s["queue"] = _queue_view()
+    s["hints"] = _hints()
+    s["eta_sec"] = _eta_seconds(s)
     # results of the most recent finished job: find files matching the song base name
     results = []
     if s.get("song"):
@@ -1329,6 +1353,285 @@ def _write_service_stamp():
             json.dump({"stamp": h, "pid": os.getpid(), "started": time.time()}, f)
     except Exception:
         pass
+
+
+
+# ===========================================================================
+# 批量队列 / ETA / 失败提示 / 诊断包
+# ===========================================================================
+QUEUE_FILE = os.path.join(APP_DIR, "queue.json")
+STATS_FILE = os.path.join(APP_DIR, "job_stats.json")
+STAGES_N = 6
+
+
+def _read_json(path, default):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return default
+
+
+def _write_json(path, data):
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=1)
+    except Exception:
+        pass
+
+
+def _queue_list():
+    q = _read_json(QUEUE_FILE, {"items": [], "paused": False})
+    if not isinstance(q, dict):
+        q = {"items": [], "paused": False}
+    q.setdefault("items", [])
+    q.setdefault("paused", False)
+    return q
+
+
+def _queue_save(q):
+    _write_json(QUEUE_FILE, q)
+
+
+def _queue_view():
+    q = _queue_list()
+    done = sum(1 for it in q["items"] if it.get("state") == "done")
+    return {"paused": q["paused"], "total": len(q["items"]), "done": done,
+            "items": q["items"][-30:]}
+
+
+def _queue_advance_if_idle():
+    """任务空闲时，取下一个待处理项开跑。"""
+    with _lock:
+        if STATE.get("running"):
+            return
+    q = _queue_list()
+    if q["paused"]:
+        return
+    nxt = None
+    for it in q["items"]:
+        if it.get("state") == "pending":
+            nxt = it
+            break
+    if not nxt:
+        return
+    path = os.path.join(songs_dir(), nxt["song"])
+    if not os.path.isfile(path):
+        nxt["state"] = "missing"
+        _queue_save(q)
+        return
+    nxt["state"] = "running"
+    _queue_save(q)
+    try:
+        run_job(path, nxt.get("bpm") or None, nxt.get("mode") or "full")
+    except Exception:
+        nxt["state"] = "pending"
+
+
+def _mark_queue_state(song, state):
+    q = _queue_list()
+    changed = False
+    for it in q["items"]:
+        if it.get("song") == song and it.get("state") in ("running", "pending"):
+            it["state"] = state
+            changed = True
+            break
+    if changed:
+        _queue_save(q)
+
+
+@app.route("/api/queue", methods=["GET", "POST"])
+def queue_api():
+    if request.method == "GET":
+        return jsonify(_queue_list())
+    body = request.get_json(silent=True) or {}
+    action = (body.get("action") or "").lower()
+    q = _queue_list()
+    if action == "add":
+        names = body.get("songs") or ([body["song"]] if body.get("song") else [])
+        added = 0
+        for n in names:
+            n = os.path.basename((n or "").strip())
+            if not n or not os.path.isfile(os.path.join(songs_dir(), n)):
+                continue
+            if any(it.get("song") == n and it.get("state") in ("pending", "running") for it in q["items"]):
+                continue
+            q["items"].append({"song": n, "mode": body.get("mode") or "full",
+                               "bpm": body.get("bpm") or None, "state": "pending"})
+            added += 1
+        _queue_save(q)
+        return jsonify({"ok": True, "added": added, "queue": _queue_view()})
+    if action == "clear":
+        cur = STATE.get("song") if STATE.get("running") else None
+        q["items"] = [it for it in q["items"] if it.get("state") == "running" and it.get("song") == cur]
+        _queue_save(q)
+        return jsonify({"ok": True, "queue": _queue_view()})
+    if action == "remove":
+        n = os.path.basename((body.get("song") or "").strip())
+        q["items"] = [it for it in q["items"] if not (it.get("song") == n and it.get("state") != "running")]
+        _queue_save(q)
+        return jsonify({"ok": True, "queue": _queue_view()})
+    if action in ("pause", "resume"):
+        q["paused"] = (action == "pause")
+        _queue_save(q)
+        return jsonify({"ok": True, "queue": _queue_view()})
+    return jsonify({"ok": False, "error": "unknown action"}), 400
+
+
+# ---------------- ETA ----------------
+def _audio_seconds(path):
+    try:
+        ff = cfg_get("ffmpegPath") or "ffmpeg"
+        probe = shutil.which("ffprobe") or "ffprobe"
+        r = subprocess.run([probe, "-v", "error", "-show_entries", "format=duration",
+                            "-of", "default=nw=1:nk=1", path],
+                           capture_output=True, text=True, timeout=30,
+                           creationflags=subprocess.CREATE_NO_WINDOW)
+        return float((r.stdout or "0").strip() or 0)
+    except Exception:
+        return 0.0
+
+
+def _stats():
+    d = _read_json(STATS_FILE, {"runs": []})
+    if not isinstance(d, dict):
+        d = {"runs": []}
+    d.setdefault("runs", [])
+    return d
+
+
+def _record_run():
+    """任务结束时记录一次耗时，供 ETA 估算。"""
+    try:
+        st = STATE.get("started_at")
+        if not st:
+            return
+        t0 = time.mktime(time.strptime(st, "%Y-%m-%d %H:%M:%S"))
+        sec = max(1.0, time.time() - t0)
+        audio = STATE.get("audio_sec") or 0
+        d = _stats()
+        d["runs"].append({"device": _last_device() or "CPU", "mode": STATE.get("mode") or "full",
+                          "seconds": round(sec, 1), "audio_sec": round(audio, 1),
+                          "when": time.strftime("%Y-%m-%d %H:%M")})
+        d["runs"] = d["runs"][-50:]
+        _write_json(STATS_FILE, d)
+    except Exception:
+        pass
+
+
+def _eta_seconds(s):
+    if not s.get("running") or not s.get("started_at"):
+        return None
+    try:
+        dev = s.get("device") or "CPU"
+        mode = s.get("mode") or "full"
+        runs = [r for r in _stats()["runs"]
+                if r.get("device") == dev and r.get("mode") == mode and r.get("seconds", 0) > 5]
+        if not runs:
+            return None
+        rate = sorted(r["seconds"] / (r["audio_sec"] or 1) for r in runs if r.get("audio_sec"))
+        if not rate:
+            return None
+        audio = s.get("audio_sec") or 0
+        if audio <= 0:
+            return None
+        total = rate[len(rate) // 2] * audio
+        t0 = time.mktime(time.strptime(s["started_at"], "%Y-%m-%d %H:%M:%S"))
+        left = total - (time.time() - t0)
+        return int(max(0, min(left, 3600 * 2)))
+    except Exception:
+        return None
+
+
+# ---------------- 失败提示 ----------------
+def _hints():
+    """从日志尾部识别常见失败，给出可执行的下一步。"""
+    if STATE.get("running") or not STATE.get("error"):
+        return []
+    try:
+        with open(LOG_FILE, "r", encoding="utf-8", errors="replace") as f:
+            tail = f.read()[-8000:].lower()
+    except Exception:
+        tail = ""
+    mode = STATE.get("mode") or "full"
+    out = []
+    if "未找到分离模型" in tail or "分离鼓轨失败" in tail or "模型缺失" in tail:
+        out.append({"text": "分离模型缺失或不可用", "actions": [
+            {"label": "去设置下载/切换模型", "kind": "settings"},
+            {"label": "只出鼓声重试", "kind": "rerun", "body": {"mode": "stems"}}]})
+    if "musescore" in tail and ("失败" in tail or "未找到" in tail or "未产出" in tail):
+        out.append({"text": "MuseScore 不可用，PDF 无法渲染", "actions": [
+            {"label": "用内置渲染重试", "kind": "rerun", "body": {"mode": mode}}]})
+    if "out of memory" in tail or "cuda" in tail and "错误" in tail:
+        out.append({"text": "显存不足或 GPU 出错", "actions": [
+            {"label": "改用 CPU 重试", "kind": "rerun", "body": {"device": "cpu", "mode": mode}}]})
+    if "未找到 adtof" in tail or "转录失败" in tail:
+        out.append({"text": "转录引擎不可用", "actions": [
+            {"label": "打开设置检查组件", "kind": "settings"}]})
+    if "没有音符" in tail or "分离没成功" in tail:
+        out.append({"text": "这段音频里可能没有可识别的鼓", "actions": [
+            {"label": "只出鼓声看看", "kind": "rerun", "body": {"mode": "stems"}}]})
+    return out
+
+
+# ---------------- 诊断包 ----------------
+@app.route("/api/diagnostics")
+def diagnostics():
+    import zipfile
+    buf = io.BytesIO()
+    notes = []
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for name, path in (("job.log", LOG_FILE),
+                           ("service.log", os.path.join(APP_DIR, "service.log")),
+                           ("launcher.log", os.path.join(APP_DIR, "launcher.log")),
+                           ("service_crash.log", os.path.join(APP_DIR, "service_crash.log"))):
+            try:
+                if os.path.isfile(path):
+                    with open(path, "rb") as f:
+                        data = f.read()[-2 * 1024 * 1024:]
+                    z.writestr(name, data)
+            except Exception as e:
+                notes.append("%s: %s" % (name, e))
+        try:
+            cfg = dict(_CFG)
+            for k in list(cfg):
+                if isinstance(cfg[k], str) and (":\\" in cfg[k] or cfg[k].startswith("/")):
+                    cfg[k] = "<PATH>"
+            z.writestr("config.json", json.dumps(cfg, ensure_ascii=False, indent=1))
+        except Exception as e:
+            notes.append("config: %s" % e)
+        try:
+            z.writestr("task_state.json", json.dumps({k: STATE.get(k) for k in STATE_KEYS},
+                                                    ensure_ascii=False, indent=1))
+            z.writestr("queue.json", json.dumps(_queue_list(), ensure_ascii=False, indent=1))
+            z.writestr("job_stats.json", json.dumps(_stats(), ensure_ascii=False, indent=1))
+        except Exception as e:
+            notes.append("state: %s" % e)
+        try:
+            g = gpu_snapshot()
+            info = ["python: " + sys.version.replace("\n", " "),
+                    "platform: " + platform.platform(),
+                    "gpu: %s" % json.dumps(g, ensure_ascii=False),
+                    "root: <PATH>", "notes: %s" % ("; ".join(notes) or "-")]
+            z.writestr("system.txt", "\n".join(info))
+        except Exception as e:
+            z.writestr("system.txt", "collect failed: %s" % e)
+        try:
+            listing = []
+            for d in (out_dir(), midis_dir()):
+                if os.path.isdir(d):
+                    for fn in sorted(os.listdir(d))[:200]:
+                        try:
+                            listing.append("%s/%s\t%d" % (os.path.basename(d), fn,
+                                                          os.path.getsize(os.path.join(d, fn))))
+                        except Exception:
+                            pass
+            z.writestr("artifacts.txt", "\n".join(listing))
+        except Exception:
+            pass
+    buf.seek(0)
+    name = "drumquill-diagnostics-%s.zip" % time.strftime("%Y%m%d-%H%M%S")
+    return send_file(buf, mimetype="application/zip", as_attachment=True, download_name=name)
 
 
 if __name__ == "__main__":

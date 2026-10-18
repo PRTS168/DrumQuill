@@ -8,6 +8,7 @@ param(
     [Parameter(Mandatory = $true)][string]$SongPath,
     [double]$BPM = 0,
     [switch]$SkipSeparation,
+    [ValidateSet('auto','cpu','cuda','gpu')][string]$Device = '',
     [switch]$SkipMuseScore,
     [switch]$SkipFfmpeg,
     [switch]$SkipAudio,
@@ -179,6 +180,7 @@ if ($SkipSeparation) {
     if ($demucsJobs -gt 4) { $demucsJobs = 4 }
 
     $devicePref = "$(Cfg 'demucsDevice' 'auto')".ToLower()
+    if ("$Device" -ne "") { $devicePref = "$Device".ToLower(); if ($devicePref -eq "gpu") { $devicePref = "cuda" } }
     $gpuPy = Cfg "gpuPython" ""
     if (-not $gpuPy) {
         $cand = Join-Path $ROOT ".venv-gpu\Scripts\python.exe"
