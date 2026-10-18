@@ -1,18 +1,18 @@
 ﻿# ============================================================================
-# 扒鼓谱 AI - 运行时 Python 依赖
+# DrumQuill - 运行时 Python 依赖
 #
 # 安装（国内镜像，推荐）：
 #   python -m pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 #
-# 注意 1：torch 建议装 CPU 版（本机实测 torch==2.14.1+cpu）。
+# 注意 1：torch 建议装 CPU 版（默认安装 torch==2.14.1，CPU wheel）。
 #   清华镜像 PyPI 源可直接装 torch==2.14.1（CPU wheel）；
 #   如需官方 +cpu 标注版，另加参数：
 #     --index-url https://download.pytorch.org/whl/cpu
 #
 # 注意 2：ADTOF-pytorch 不在 PyPI，本文件底部已按 VCS 形式列出（pip 原生支持），
-#   首次安装需本机有 git；离线/无 git 环境可从
+#   首次安装需要 git；没有 git 的环境可从
 #     https://github.com/xavriley/ADTOF-pytorch
-#   下载源码后 `pip install -e .`（本机锁定提交 85c192e）。
+#   下载源码后 `pip install -e .`（对应提交 85c192e）。
 #
 # 注意 3：bootstrap/install.ps1 会读取本文件批量安装；改版本后请同步自查一致性。
 # ============================================================================
