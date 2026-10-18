@@ -2369,143 +2369,187 @@
 })();
 </script>
 <script>
-/* ===== 动态谱：自研 SVG 渲染 + 小节高亮 + 点击跳转 ===== */
+/* ===== 谱面视图：PDF 页面 + 光标覆盖层（与打印版同一张谱） ===== */
 (function () {
-  var W = 5;                 /* 每个系统 5 小节 */
-  var BAR_H = 74, SYS_GAP = 54, LEFT = 34;
-  var Y = {cymbal: 10, hihat: 22, tom: 40, snare: 44, kick: 58};
-  var map = null, curBar = -2, audio = null;
+  var st = { song: '', bars: [], layout: null, page: 1, cur: -2, audio: null, key: '' };
+  var $ = function (s) { return document.querySelector(s); };
 
-  function $(s) { return document.querySelector(s); }
-  function box() {
-    var b = document.getElementById('dqScore');
-    if (b) return b;
-    /* PDF 仍是第一产物：动态谱放在 PDF 预览卡之后 */
-    var anchor = document.getElementById('openPdfBtn');
-    var host = anchor ? (anchor.closest('.card') || anchor.parentNode) : document.getElementById('doneMeta');
-    if (!host || !host.parentNode) return null;
-    b = document.createElement('div');
-    b.id = 'dqScore';
-    b.style.margin = '14px 0 0';
-    host.parentNode.insertBefore(b, host.nextSibling);
-    return b;
+  function hostCard() {
+    var a = document.getElementById('openPdfBtn');
+    return a ? a.closest('.card') : null;
   }
 
-  function draw() {
-    var host = box();
-    if (!host || !map || !map.bars || !map.bars.length) return;
-    var width = host.clientWidth || 760;
-    var bw = (width - LEFT - 12) / W;
-    var rows = Math.ceil(map.bars.length / W);
-    var H = rows * (BAR_H + SYS_GAP) + 40;
-    var svg = ['<svg width="100%" viewBox="0 0 ' + width + ' ' + H + '" style="display:block">'];
-    map.bars.forEach(function (b, k) {
-      var sys = Math.floor(k / W), col = k % W;
-      var x0 = LEFT + col * bw, y0 = 24 + sys * (BAR_H + SYS_GAP);
-      var x1 = x0 + bw, yb = y0 + 58;
-      svg.push('<g class="dqbar" data-s="' + b.start + '" data-i="' + k + '">');
-      svg.push('<rect class="dqhit" x="' + x0 + '" y="' + (y0 - 8) + '" width="' + bw +
-               '" height="' + (BAR_H + 6) + '" fill="transparent"/>');
-      /* 五线谱 */
-      for (var i = 0; i < 5; i++) {
-        var yy = y0 + 22 + i * 9;
-        svg.push('<line x1="' + x0 + '" y1="' + yy + '" x2="' + x1 + '" y2="' + yy +
-                 '" stroke="#94a3b8" stroke-width="0.8"/>');
+  function card() {
+    var c = document.getElementById('dqScore');
+    if (c) return c;
+    var h0 = hostCard();
+    if (!h0 || !h0.parentNode) return null;
+    c = document.createElement('div');
+    c.id = 'dqScore';
+    c.className = 'card';
+    c.style.marginTop = '14px';
+    h0.parentNode.insertBefore(c, h0.nextSibling);
+    /* 只藏旧卡里那张 PDF 预览图，保留播放器与产物按钮，避免两套谱面并列 */
+    Array.prototype.forEach.call(h0.querySelectorAll('img'), function (im) {
+      var src = im.getAttribute('src') || '';
+      if (src.indexOf('/api/pdf/page') >= 0) {
+        /* 只藏这张图本身：外层容器里可能还有试听播放器，别整块隐藏 */
+        im.style.display = 'none';
       }
-      /* 小节线与小节号 */
-      svg.push('<line x1="' + x0 + '" y1="' + (y0 + 22) + '" x2="' + x0 + '" y2="' + (y0 + 58) +
-               '" stroke="#64748b" stroke-width="1.2"/>');
-      svg.push('<line x1="' + x1 + '" y1="' + (y0 + 22) + '" x2="' + x1 + '" y2="' + (y0 + 58) +
-               '" stroke="#cbd5e1" stroke-width="0.8"/>');
-      svg.push('<text x="' + (x0 + 2) + '" y="' + (y0 + 16) + '" font-size="9" fill="#94a3b8">' + (k + 1) + '</text>');
-      (b.notes || []).forEach(function (n) {
-        var nx = x0 + 8 + n.p * (bw - 16) / 16;
-        var ny = y0 + (Y[n.c] != null ? Y[n.c] : 40);
-        if (n.c === 'hihat' || n.c === 'cymbal') {
-          var g = n.c === 'cymbal' ? 5.2 : 4.4;
-          svg.push('<text x="' + nx + '" y="' + ny + '" font-size="' + (g * 2.6) +
-                   '" text-anchor="middle" fill="#0f172a">✕</text>');
-        } else {
-          var r = n.c === 'kick' ? 3.4 : 3.0;
-          svg.push('<circle cx="' + nx + '" cy="' + (ny - 3) + '" r="' + r + '" fill="#0f172a"/>');
-          svg.push('<line x1="' + nx + '" y1="' + (ny - 3 - r) + '" x2="' + nx + '" y2="' + (ny - 12) +
-                   '" stroke="#0f172a" stroke-width="0.9"/>');
-        }
-      });
-      svg.push('</g>');
     });
-    svg.push('</svg>');
-    host.innerHTML =
-      '<div class="note info" style="margin:0 0 8px"><span>i</span><div>' +
-      '<b>动态谱</b>：播放时高亮当前小节，点小节可跳转。打印仍用上面的 PDF。' +
-      '<span style="margin-left:8px"><button class="btn ghost sm" id="dqScoreToggle">收起</button></span>' +
-      '</div></div><div id="dqScoreBody">' + svg.join('') + '</div>';
-    bind();
+    /* 顺手把旧卡的"鼓谱预览 共 N 页"标题条也藏掉，避免残留空条 */
+    Array.prototype.forEach.call(h0.querySelectorAll('div'), function (d) {
+      var txt = (d.textContent || '').trim();
+      if (d.children.length <= 3 && txt.indexOf('鼓谱预览') === 0) d.style.display = 'none';
+    });
+    return c;
   }
 
-  function bind() {
-    document.querySelectorAll('#dqScoreBody .dqbar').forEach(function (g) {
-      g.style.cursor = 'pointer';
-      g.addEventListener('click', function () {
-        var s = parseFloat(g.getAttribute('data-s'));
-        if (audio && isFinite(s)) { audio.currentTime = Math.max(0, s + 0.02); audio.play(); }
-      });
-    });
-    var t = document.getElementById('dqScoreToggle');
-    if (t) t.onclick = function () {
-      var body = document.getElementById('dqScoreBody');
-      var on = body.style.display !== 'none';
-      body.style.display = on ? 'none' : 'block';
-      t.textContent = on ? '展开' : '收起';
+  function build() {
+    var c = card();
+    if (!c || !st.layout || !st.bars.length) return;
+    var pg = st.layout.pages[st.page - 1];
+    if (!pg) return;
+    c.innerHTML =
+      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">' +
+      '<b style="font-size:15px">鼓谱</b><span class="d">播放时光标跟随 · 点小节可跳转</span>' +
+      '<span style="flex:1"></span>' +
+      '<button class="btn ghost sm" id="dqPrevPage">上一页</button>' +
+      '<span class="d" id="dqPageLabel">第 ' + st.page + ' / ' + st.layout.pages.length + ' 页</span>' +
+      '<button class="btn ghost sm" id="dqNextPage">下一页</button>' +
+      '<button class="btn ghost sm" id="dqSavePdf">保存 PDF</button></div>' +
+      '<audio id="dqAudio" controls preload="metadata" style="width:100%;margin:8px 0 10px" src="/api/source?song=' +
+      encodeURIComponent(st.song) + '"></audio>' +
+      '<div id="dqStage" style="position:relative;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;background:#fff">' +
+      '<img id="dqPageImg" style="width:100%;display:block" src="/api/pdf/page?song=' +
+      encodeURIComponent(st.song) + '&page=' + st.page + '&dpi=150" alt="鼓谱">' +
+      '<svg id="dqOverlay" style="position:absolute;left:0;top:0;width:100%;height:100%"></svg></div>';
+    bindChrome();
+    paintOverlay();
+  }
+
+  function bindChrome() {
+    var c = card();
+    var prev = document.getElementById('dqPrevPage'), next = document.getElementById('dqNextPage');
+    var save = document.getElementById('dqSavePdf');
+    if (prev) prev.onclick = function () { st.page = Math.max(1, st.page - 1); build(); };
+    if (next) next.onclick = function () {
+      st.page = Math.min(st.layout.pages.length, st.page + 1); build();
     };
-    if (!audio) {
-      audio = document.getElementById('resAudio');
-      if (audio) audio.addEventListener('timeupdate', tick);
-    }
+    if (save) save.onclick = function () {
+      window.location.href = '/api/download?kind=pdf&song=' + encodeURIComponent(st.song);
+    };
   }
 
-  function tick() {
-    if (!map || !audio) return;
-    var t = audio.currentTime || 0;
-    var bars = map.bars, idx = -1;
-    for (var i = 0; i < bars.length; i++) {
-      if (t >= bars[i].start && t < (bars[i].end || bars[i].start + 2)) { idx = i; break; }
-    }
-    if (idx === curBar) return;
-    curBar = idx;
-    var nodes = document.querySelectorAll('#dqScoreBody .dqbar');
-    nodes.forEach(function (g, i) {
-      var on = (i === idx);
-      g.setAttribute('opacity', on ? '1' : '0.55');
-      var r = g.querySelector('.dqhit');
-      if (r) r.setAttribute('fill', on ? 'rgba(14,116,144,0.12)' : 'transparent');
-    });
-    if (idx >= 0 && nodes[idx]) {
-      var sys = Math.floor(idx / W);
-      var target = document.getElementById('dqScoreBody');
-      if (target) {
-        var y = 24 + sys * (BAR_H + SYS_GAP) - 20;
-        target.scrollTop = Math.max(0, y - 40);
+  function barGeo(idx) {
+    /* 全局小节号 -> {page, system, x0, x1, top, bottom} */
+    var n = 0;
+    for (var p = 0; p < st.layout.pages.length; p++) {
+      var pg = st.layout.pages[p];
+      for (var si = 0; si < pg.systems.length; si++) {
+        var sy = pg.systems[si], bn = sy.bounds.length - 1;
+        if (idx >= n && idx < n + bn) {
+          return {page: p + 1, top: sy.top, bottom: sy.bottom,
+                  x0: sy.bounds[idx - n], x1: sy.bounds[idx - n + 1]};
+        }
+        n += bn;
       }
     }
+    return null;
+  }
+
+  function paintOverlay() {
+    var img = document.getElementById('dqPageImg'), ov = document.getElementById('dqOverlay');
+    if (!img || !ov) return;
+    var pg = st.layout.pages[st.page - 1];
+    ov.setAttribute('viewBox', '0 0 ' + pg.w + ' ' + pg.h);
+    ov.innerHTML = '';
+    var t = (st.audio && st.audio.currentTime) || 0;
+    var idx = -1, frac = 0;
+    for (var i = 0; i < st.bars.length; i++) {
+      var b = st.bars[i], s = b.start, e = b.end || (s + 2);
+      if (t >= s && t < e) { idx = i; frac = (t - s) / Math.max(0.2, e - s); break; }
+    }
+    if (idx < 0) { st.cur = -2; return; }
+    var g = barGeo(idx);
+    if (!g || g.page !== st.page) {
+      if (g && g.page !== st.page) { st.page = g.page; build(); }
+      return;
+    }
+    var pad = (g.bottom - g.top) * 0.18;
+    var h = g.bottom - g.top + pad * 2, y = g.top - pad;
+    var x = g.x0 + (g.x1 - g.x0) * frac;
+    ov.innerHTML =
+      '<rect x="' + g.x0 + '" y="' + y + '" width="' + (g.x1 - g.x0) + '" height="' + h +
+      '" fill="rgba(13,148,136,0.08)"/>' +
+      '<rect x="' + x.toFixed(1) + '" y="' + y + '" width="2.6" height="' + h +
+      '" fill="#0d9488" opacity="0.95"/>' +
+      '<polygon points="' + x.toFixed(1) + ',' + y + ' ' + (x - 3.5).toFixed(1) + ',' + (y - 6) + ' ' +
+      (x + 3.5).toFixed(1) + ',' + (y - 6) + '" fill="#0d9488"/>';
+    if (idx !== st.cur) st.cur = idx;
+  }
+
+  function bindClick() {
+    var ov = document.getElementById('dqOverlay');
+    if (!ov || ov.dataset.bound) return;
+    ov.dataset.bound = '1';
+    ov.addEventListener('click', function (ev) {
+      var img = document.getElementById('dqPageImg');
+      if (!img) return;
+      var r = img.getBoundingClientRect();
+      var pg = st.layout.pages[st.page - 1];
+      var px = (ev.clientX - r.left) / r.width * pg.w;
+      var py = (ev.clientY - r.top) / r.height * pg.h;
+      var n = 0;
+      for (var p = 0; p < st.page; p++) {
+        var page = st.layout.pages[p];
+        for (var si = 0; si < page.systems.length; si++) {
+          var sy = page.systems[si];
+          if (p === st.page - 1 && py >= sy.top - 12 && py <= sy.bottom + 12) {
+            for (var b = 0; b < sy.bounds.length - 1; b++) {
+              if (px >= sy.bounds[b] && px <= sy.bounds[b + 1]) {
+                var idx = n + b;
+                if (st.bars[idx] && st.audio) {
+                  st.audio.currentTime = Math.max(0, st.bars[idx].start + 0.01);
+                  st.audio.play();
+                }
+                return;
+              }
+            }
+          }
+          n += sy.bounds.length - 1;
+        }
+      }
+    });
   }
 
   function load() {
-    fetch('/api/status').then(function (r) { return r.json(); }).then(function (st) {
-      if (!st || !st.song || st.running) return;
-      var key = st.song + '|' + (st.finished || '');
-      if (load.key === key) return;
-      fetch('/api/scoremap?song=' + encodeURIComponent(st.song)).then(function (r) {
-        return r.ok ? r.json() : null;
-      }).then(function (j) {
-        if (!j || !j.ok) { var b = document.getElementById('dqScore'); if (b) b.innerHTML = ''; return; }
-        map = j; curBar = -2; load.key = key;
-        setTimeout(draw, 60);
+    fetch('/api/status').then(function (r) { return r.json(); }).then(function (s) {
+      if (!s || !s.song || s.running) return;
+      var k = s.song + '|' + (s.finished || '');
+      if (k === st.key) return;
+      st.song = s.song;
+      Promise.all([
+        fetch('/api/scoremap?song=' + encodeURIComponent(s.song)).then(function (r) { return r.ok ? r.json() : null; }),
+        fetch('/api/scorelayout?song=' + encodeURIComponent(s.song)).then(function (r) { return r.ok ? r.json() : null; })
+      ]).then(function (res) {
+        var sm = res[0], lo = res[1];
+        if (!sm || !sm.ok || !lo || !lo.ok) return;
+        st.base = sm.base; st.bars = sm.bars; st.layout = lo; st.key = k; st.page = 1; st.cur = -2;
+        setTimeout(function () {
+          build();
+          bindClick();
+          st.audio = document.getElementById('dqAudio') || document.getElementById('resAudio');
+          if (st.audio && !st.audio.dataset.dqBound) {
+            st.audio.dataset.dqBound = '1';
+            st.audio.addEventListener('timeupdate', paintOverlay);
+          }
+        }, 80);
       }).catch(function () {});
     }).catch(function () {});
   }
   setInterval(load, 3000);
-  setTimeout(load, 2000);
+  setTimeout(load, 1500);
 })();
 </script>
 </body>

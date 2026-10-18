@@ -1698,6 +1698,77 @@ def scoremap():
                     "audio": "/api/download?kind=audio&song=%s&preview=1" % base})
 
 
+def _pdf_layout(pdf_path):
+    """从 MuseScore 导出的 PDF 里读出每个系统行的横线与小节线坐标。"""
+    import pymupdf
+    doc = pymupdf.open(pdf_path)
+    pages = []
+    for pno, page in enumerate(doc, 1):
+        hl, vl = [], []
+        for d in page.get_drawings():
+            for it in d["items"]:
+                if it[0] != "l":
+                    continue
+                p1, p2 = it[1], it[2]
+                if abs(p1.y - p2.y) < 0.6 and abs(p1.x - p2.x) > 40:
+                    hl.append((round(p1.y, 1), round(min(p1.x, p2.x), 1), round(max(p1.x, p2.x), 1)))
+                elif abs(p1.x - p2.x) < 0.6:
+                    vl.append((round(p1.x, 1), round(min(p1.y, p2.y), 1), round(max(p1.y, p2.y), 1)))
+        ys = sorted({h[0] for h in hl})
+        # 五线一组
+        syss, i = [], 0
+        while i + 4 < len(ys):
+            g = ys[i:i + 5]
+            step = (g[-1] - g[0]) / 4.0
+            if step > 2 and all(abs((g[k + 1] - g[k]) - step) < 0.6 for k in range(4)):
+                syss.append((g[0], g[-1], step))
+                i += 5
+            else:
+                i += 1
+        systems = []
+        for top, bot, step in syss:
+            xs = [h for h in hl if abs(h[0] - top) < 0.6]
+            if not xs:
+                continue
+            x0 = min(h[1] for h in xs)
+            x1 = max(h[2] for h in xs)
+            bars = sorted({x for x, y0, y1 in vl if abs(y0 - top) < 1.5 and abs(y1 - bot) < 1.5})
+            bounds = [x0] + [b for b in bars if x0 + 1 < b <= x1 + 1]
+            bounds = sorted(set(round(b, 1) for b in bounds))
+            if x1 > bounds[-1] + 1:
+                bounds.append(round(x1, 1))
+            systems.append({"top": top, "bottom": bot, "x0": round(x0, 1), "x1": round(x1, 1),
+                            "bounds": bounds})
+        pages.append({"page": pno, "w": round(page.rect.width, 1), "h": round(page.rect.height, 1),
+                      "systems": systems})
+    return pages
+
+
+@app.route("/api/scorelayout")
+def scorelayout():
+    """PDF 版谱面的几何（系统行 + 小节线），供前端叠光标。"""
+    base = os.path.splitext(os.path.basename(request.args.get("song", "") or ""))[0]
+    pdf_p = os.path.join(out_dir(), base + "_鼓谱.pdf")
+    if not base or not os.path.isfile(pdf_p):
+        return jsonify({"ok": False, "error": "no pdf"}), 404
+    try:
+        pages = _pdf_layout(pdf_p)
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+    total = sum(max(0, len(s["bounds"]) - 1) for p in pages for s in p["systems"])
+    return jsonify({"ok": True, "base": base, "pages": pages, "bars_detected": total})
+
+
+@app.route("/api/source")
+def api_source():
+    """原曲音频（动态谱跟着原曲走：拍点就是从原曲跟出来的，时间轴一致）。"""
+    name = os.path.basename(request.args.get("song", "") or "")
+    path = os.path.join(songs_dir(), name)
+    if not name or not os.path.isfile(path):
+        return jsonify({"ok": False, "error": "not found"}), 404
+    return send_file(path, conditional=True)
+
+
 if __name__ == "__main__":
     os.makedirs(APP_DIR, exist_ok=True)
     _install_crash_hooks()
