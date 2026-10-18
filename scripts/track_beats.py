@@ -24,8 +24,16 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def set_torch_home():
-    """把模型缓存固定在数据目录里，便于离线复用与清理。"""
-    torch_home = os.path.join(ROOT, "models", "torch")
+    """模型缓存定位：优先仓库内 models\\torch，其次用户设置的 TORCH_HOME。
+
+    这样无论系统缓存目录怎么迁移，只要仓库里存过权重就能离线复用；
+    两处都没有时才按 TORCH_HOME 下载。
+    """
+    local = os.path.join(ROOT, "models", "torch", "hub", "checkpoints")
+    if os.path.isdir(local) and any(f.endswith(".ckpt") for f in os.listdir(local)):
+        os.environ["TORCH_HOME"] = os.path.join(ROOT, "models", "torch")
+        return
+    torch_home = os.environ.get("TORCH_HOME") or os.path.join(ROOT, "models", "torch")
     try:
         os.makedirs(torch_home, exist_ok=True)
         os.environ.setdefault("TORCH_HOME", torch_home)

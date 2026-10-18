@@ -1658,6 +1658,46 @@ def diagnostics():
     return send_file(buf, mimetype="application/zip", as_attachment=True, download_name=name)
 
 
+@app.route("/api/scoremap")
+def scoremap():
+    """给"动态谱"用：每小节的起止秒 + 该小节的音符（鼓类 + 十六分格位置）。"""
+    base = os.path.splitext(os.path.basename(request.args.get("song", "") or ""))[0]
+    plan_p = os.path.join(midis_dir(), base + ".beats_plan.json")
+    mid_p = os.path.join(midis_dir(), base + ".beats.mid")
+    if not base or not os.path.isfile(plan_p) or not os.path.isfile(mid_p):
+        return jsonify({"ok": False, "error": "no beat-grid data"}), 404
+    try:
+        with open(plan_p, encoding="utf-8-sig") as f:
+            plan = json.load(f)
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+    bars = plan.get("bars") or []
+    meter = int(plan.get("meter") or 4)
+    bpm = float(plan.get("bpm_median") or 120.0)
+    try:
+        import pretty_midi
+        pm = pretty_midi.PrettyMIDI(mid_p)
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+    cls_of = {35: "kick", 38: "snare", 47: "tom", 42: "hihat", 49: "cymbal"}
+    cells = {}
+    bar_ticks = meter * 480
+    for inst in pm.instruments:
+        for n in inst.notes:
+            c = cls_of.get(int(n.pitch))
+            if not c:
+                continue
+            tick = int(round(n.start * (bpm / 60.0) * 480))
+            bi, t = divmod(tick, bar_ticks)
+            cells.setdefault(bi, []).append({"c": c, "p": int(t // 120), "v": int(n.velocity or 100)})
+    out = []
+    for i, b in enumerate(bars):
+        out.append({"i": i, "start": b.get("start"), "end": b.get("end"), "bpm": b.get("bpm"),
+                    "notes": sorted(cells.get(i, []), key=lambda x: x["p"])})
+    return jsonify({"ok": True, "base": base, "meter": meter, "bars": out,
+                    "audio": "/api/download?kind=audio&song=%s&preview=1" % base})
+
+
 if __name__ == "__main__":
     os.makedirs(APP_DIR, exist_ok=True)
     _install_crash_hooks()

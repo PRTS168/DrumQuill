@@ -1,0 +1,18 @@
+{
+ "runs": [
+  {
+   "device": "GPU",
+   "mode": "score",
+   "seconds": 56.5,
+   "audio_sec": 40.0,
+   "when": "2026-10-18 23:37"
+  },
+  {
+   "device": "GPU",
+   "mode": "score",
+   "seconds": 62.6,
+   "audio_sec": 40.0,
+   "when": "2026-10-18 23:39"
+  }
+ ]
+}
