@@ -370,10 +370,87 @@
   footer a{color:var(--ink-2);text-decoration:none}
   footer a:hover{color:var(--accent);text-decoration:underline}
 
+  /* ===================== 完成视图：结论条 ===================== */
+  #viewDone.slim{padding:16px 20px}
+  #viewDone .donehead{align-items:center;flex-wrap:wrap;gap:14px;margin-bottom:0}
+  #viewDone .donehead .bigicon{width:36px;height:36px;font-size:16px}
+  #viewDone .dh-main{flex:1;min-width:190px}
+  #viewDone .dh-main h1{font-size:17px}
+  #viewDone .dh-main .metaline{margin-top:3px}
+  #viewDone .dh-act{display:flex;gap:8px;flex-wrap:wrap}
+
+  /* ===================== 谱面工作台（像 PDF 阅读器） ===================== */
+  .card.scorecard{
+    --sw:min(1040px,calc(100vw - 32px));
+    width:var(--sw);margin-left:calc((100% - var(--sw))/2);margin-right:0;
+    padding:0;overflow:clip;
+  }
+  .score-head{display:flex;align-items:center;gap:12px;padding:13px 20px;border-bottom:1px solid var(--line-soft);flex-wrap:wrap}
+  .score-head h1{font-size:15px}
+  .score-head .sh-sub{font-size:11.5px;color:var(--ink-3);margin-top:1px}
+  .score-head .sh-tools{margin-left:auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .pgnav{display:inline-flex;align-items:center;gap:2px}
+  .pgnav .pv-page{min-width:54px;text-align:center;font-family:var(--mono);font-size:12px;color:var(--ink-2)}
+  select.inp{width:auto;padding:0 8px;cursor:pointer}
+
+  /* 吸顶播放条 */
+  .transport{
+    position:sticky;top:56px;z-index:20;display:flex;align-items:center;gap:12px;
+    padding:10px 20px;background:rgba(255,255,255,.97);backdrop-filter:blur(6px);
+    border-bottom:1px solid var(--line-soft)
+  }
+  .tplay{width:36px;height:36px;border-radius:50%;border:1px solid var(--accent);background:var(--accent);
+    color:#fff;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;
+    flex:none;font-family:inherit;transition:background .15s}
+  .tplay:hover{background:var(--accent-ink);border-color:var(--accent-ink)}
+  .ttime{font-family:var(--mono);font-size:12px;color:var(--ink-2);white-space:nowrap;font-variant-numeric:tabular-nums}
+  .ttime .sep{color:var(--ink-3);margin:0 3px}
+  .tscrub{flex:1;height:24px;position:relative;display:flex;align-items:center;cursor:pointer;min-width:70px;touch-action:none}
+  .tscrub::before{content:"";position:absolute;left:0;right:0;height:5px;border-radius:3px;background:#e6eaec}
+  .tfill{position:absolute;left:0;height:5px;border-radius:3px;background:var(--accent);width:0}
+  .thead{position:absolute;width:12px;height:12px;border-radius:50%;background:#fff;border:2px solid var(--accent);
+    margin-left:-6px;box-shadow:0 1px 3px rgba(16,40,50,.25);left:0}
+  .srcseg{height:30px}
+  .srcseg button{font-size:12px;padding:0 11px}
+
+  /* 纸张区：灰底 + 白纸阴影 */
+  .paper{background:#e9edef;padding:20px;display:flex;justify-content:center}
+  .paper .pg{position:relative;background:#fff;max-width:100%;
+    box-shadow:0 1px 2px rgba(16,24,30,.13),0 10px 26px rgba(16,24,30,.10)}
+  .paper .pg img{display:block;width:100%;height:auto}
+  #dqOverlay{position:absolute;left:0;top:0;width:100%;height:100%;cursor:pointer}
+  .paper.zoomed{overflow-x:auto;justify-content:flex-start}
+  .paper.zoomed .pg{max-width:none}
+  /* 适应整页：一眼看完整张纸（细节靠「放大」） */
+  .paper.pagefit{overflow:auto}
+  .paper.pagefit .pg{height:calc(100vh - 320px);max-width:none}
+  .paper.pagefit .pg img{height:100%;width:auto}
+
+  /* 小节导航 */
+  .barnav{display:flex;align-items:center;gap:8px;padding:9px 20px;border-top:1px solid var(--line-soft);
+    background:#fbfcfc;font-size:12px;color:var(--ink-2);flex-wrap:wrap}
+  .barnav .bn-lab{font-family:var(--mono);font-size:11.5px;color:var(--ink-3);white-space:nowrap}
+  .barnav b{font-family:var(--mono);font-weight:600;color:var(--ink);font-size:12.5px}
+  .barnav .sp{flex:1}
+  .barnav .cur{color:var(--accent-ink);font-weight:600}
+  .barnav audio{display:none}
+
+  /* 产物 */
+  .prod{padding:4px 20px 12px}
+  .prod .dlrow{border-bottom:1px solid var(--line-soft);padding:9px 0}
+  .prod .dlrow:last-child{border-bottom:none}
+  .prod:empty{display:none}
+
   @media (max-width:700px){
     .grid{grid-template-columns:1fr}
     header.top .wrap{height:auto;padding:10px 20px;flex-wrap:wrap;gap:8px}
     .card{padding:18px}
+    .score-head,.transport,.barnav,.prod{padding-left:14px;padding-right:14px}
+    .paper{padding:10px}
+    .transport{top:0;gap:8px}
+    .score-head h1,.score-head .sh-sub{display:none}
+    .score-head{padding-top:10px;padding-bottom:10px}
+    .score-head .sh-tools{margin-left:0;width:100%}
   }
 </style>
 </head>
@@ -487,41 +564,78 @@
     <details class="logwrap" id="logWrap"><summary>运行日志（可展开）</summary><div class="log" id="log"></div></details>
   </section>
 
-  <!-- ============ 视图 3：完成 ============ -->
-  <section class="card" id="viewDone" hidden>
+  <!-- ============ 视图 3：完成 —— 结论条（细节都在下面的谱面工作台里） ============ -->
+  <section class="card slim" id="viewDone" hidden>
     <div class="donehead">
       <div class="bigicon">✓</div>
-      <div>
+      <div class="dh-main">
         <h1>扒谱完成</h1>
         <div class="metaline" id="doneMeta"></div>
       </div>
-    </div>
-
-    <!-- 谱面预览（第一页，点击看完整鼓谱）—— PDF 是第一产物，放最前面 -->
-    <div class="scorebox" id="scoreBox" hidden>
-      <div class="sb-head">
-        <b>鼓谱预览</b><span id="sbMeta"></span>
-        <span class="sp"></span>
-        <button class="btn ghost sm" id="sbOpen">查看完整鼓谱 →</button>
+      <div class="dh-act">
+        <button class="btn primary" id="openPdfBtn">全屏看鼓谱</button>
+        <a class="btn" id="savePdfBtn" href="#">保存 PDF</a>
+        <button class="btn ghost" id="openFolderBtn">输出目录</button>
+        <button class="btn ghost" id="againBtn">再扒一首</button>
       </div>
-      <img id="sbImg" alt="鼓谱第 1 页" title="点击查看完整鼓谱">
+    </div>
+    <!-- 兼容旧逻辑的占位：不再出现第二套谱面/第二个播放器 -->
+    <div class="scorebox" id="scoreBox" hidden></div>
+    <div class="player" id="audioPlayer" style="display:none"><audio id="resAudio" preload="metadata"></audio></div>
+  </section>
+
+  <!-- ============ 谱面工作台：就是打印出来那张 PDF，光标跟着播放走 ============ -->
+  <section class="card scorecard" id="dqScore" hidden>
+    <div class="score-head">
+      <div>
+        <h1>鼓谱</h1>
+        <div class="sh-sub">与打印版同一张谱 · 播放时光标自动跟随 · 点任意小节跳到那里</div>
+      </div>
+      <div class="sh-tools">
+        <span class="pgnav">
+          <button class="btn ghost sm" id="dqPrevPage" title="上一页（←）">‹</button>
+          <span class="pv-page" id="dqPageLabel">1 / 1</span>
+          <button class="btn ghost sm" id="dqNextPage" title="下一页（→）">›</button>
+        </span>
+        <select class="inp" id="dqZoom" title="清晰度">
+          <option value="fit">适应宽度</option>
+          <option value="page">适应整页</option>
+          <option value="hd">高清</option>
+          <option value="big">放大</option>
+        </select>
+      </div>
     </div>
 
-    <div class="actions" style="margin-top:16px">
-      <button class="btn primary big" id="openPdfBtn">查看鼓谱 PDF</button>
-      <a class="btn" id="savePdfBtn" href="#">保存 PDF</a>
-      <button class="btn" id="againBtn">再扒一首</button>
-      <button class="btn ghost" id="openFolderBtn">打开输出目录</button>
+    <div class="transport">
+      <button class="tplay" id="dqPlay" title="播放 / 暂停（空格）">▶</button>
+      <div class="ttime"><span id="dqCur">0:00</span><span class="sep">/</span><span id="dqDur">0:00</span></div>
+      <div class="tscrub" id="dqScrub" title="拖动定位（也可直接点谱面）">
+        <div class="tfill" id="dqFill"></div><div class="thead" id="dqHead"></div>
+      </div>
+      <div class="seg srcseg" id="dqSrc">
+        <button data-src="mix" class="on" title="原曲音频：拍点就是从它算出来的，跟谱最准">原曲</button>
+        <button data-src="drum" title="按识别结果合成的鼓声（需要本次生成了音频）">鼓声</button>
+      </div>
     </div>
 
-    <div class="player" id="audioPlayer">
-      <div class="plabel">鼓声试听（按识别结果合成的音频）</div>
-      <audio id="resAudio" controls preload="metadata"></audio>
+    <div class="paper" id="dqPaper">
+      <div class="pg" id="dqStage">
+        <img id="dqPageImg" alt="鼓谱">
+        <svg id="dqOverlay"></svg>
+      </div>
     </div>
 
-    <div id="doneList"></div>
+    <div class="barnav">
+      <button class="btn ghost sm" id="dqPrevBar" title="上一小节">上一小节</button>
+      <button class="btn ghost sm" id="dqNextBar" title="下一小节">下一小节</button>
+      <span class="bn-lab">第 <b id="dqBarNo">–</b> / <span id="dqBarTotal">–</span> 小节<span id="dqBarTime"></span></span>
+      <span class="sp"></span>
+      <span class="bn-lab" id="dqStat"></span>
+      <audio id="dqAudio" preload="metadata"></audio>
+    </div>
 
-    <details class="logwrap"><summary>运行日志（可展开）</summary><div class="log" id="doneLog"></div></details>
+    <div class="prod" id="doneList"></div>
+    <details class="logwrap" style="margin:0 20px 16px"><summary>运行日志</summary><div class="log" id="doneLog"></div></details>
   </section>
 
   <!-- ============ 视图 4：失败 / 中断 ============ -->
@@ -786,6 +900,9 @@
       var el = $(map[k]);
       if(k === name) show(el); else hide(el);
     });
+    /* 谱面工作台只在「完成」且数据已就绪时出现 */
+    var sc = document.getElementById('dqScore');
+    if(sc) sc.hidden = (name !== 'done' || sc.dataset.ready !== '1');
   }
 
   /* ================= 设备 ================= */
@@ -1100,40 +1217,26 @@
     var hasPdf = (s.results||[]).some(function(r){ return r.kind==='pdf'; });
     var hasAudio = (s.results||[]).some(function(r){ return r.kind==='audio'; });
 
-    /* PDF 是第一产物：先给谱面预览，主按钮是"查看鼓谱" */
+    /* PDF 是第一产物：谱面工作台会直接显示它，这里只留按钮 */
     if(hasPdf){
-      show($('#scoreBox'));
-      var im = $('#sbImg');
-      im.onclick = function(){ openPdf(base); };
-      im.onerror = function(){ hide($('#scoreBox')); };
-      im.src = '/api/pdf/page?song='+encodeURIComponent(base)+'&page=1&dpi=110';
-      $('#sbMeta').textContent = '';
-      fetch('/api/pdf/info?song='+encodeURIComponent(base)).then(function(r){ return r.json(); }).then(function(j){
-        if(j.ok) $('#sbMeta').textContent = '共 ' + j.pages + ' 页 · ' + fmtSize(j.size) + ' · 点击图可放大查看';
-      }).catch(function(){});
       show($('#openPdfBtn'));
-      $('#openPdfBtn').textContent = '查看鼓谱 PDF';
+      $('#openPdfBtn').textContent = '全屏看鼓谱';
       $('#openPdfBtn').onclick = function(){ openPdf(base); };
       show($('#savePdfBtn'));
       $('#savePdfBtn').href = '/api/download?kind=pdf&song='+encodeURIComponent(base);
-      $('#sbOpen').onclick = function(){ openPdf(base); };
     }else{
-      hide($('#scoreBox'));
       hide($('#openPdfBtn'));
       hide($('#savePdfBtn'));
       $('#openPdfBtn').onclick = null;
     }
 
-    /* 音频是第二产物 */
+    /* 音频是第二产物：鼓声轨喂给谱面工作台的「鼓声」音源 */
     if(hasAudio){
       var src = '/api/download?kind=audio&song='+encodeURIComponent(s.song)+'&preview=1';
       var au = $('#resAudio');
       if(au.getAttribute('src') !== src) au.src = src;
-      $('#audioPlayer').style.display = '';
-      if(!hasPdf){ $('#audioPlayer').style.order = '-1'; }
     }else{
       $('#resAudio').removeAttribute('src');
-      $('#audioPlayer').style.display = 'none';
     }
 
     var label = { pdf:'鼓谱 PDF', xml:'MusicXML', mid:'MIDI', audio:'鼓声音频' };
@@ -2369,88 +2472,49 @@
 })();
 </script>
 <script>
-/* ===== 谱面视图：PDF 页面 + 光标覆盖层（与打印版同一张谱） ===== */
+/* ===== 谱面工作台：就是那张 PDF + 光标 + 播放条 ===== */
 (function () {
-  var st = { song: '', bars: [], layout: null, page: 1, cur: -2, audio: null, key: '' };
+  'use strict';
+  var st = {
+    song: '', bars: [], layout: null, page: 1, cur: -2,
+    zoom: 'fit', src: 'mix', key: '', playing: false, pageCount: 1
+  };
+  var DPI = { fit: 150, page: 200, hd: 200, big: 320 };
   var $ = function (s) { return document.querySelector(s); };
 
-  function hostCard() {
-    var a = document.getElementById('openPdfBtn');
-    return a ? a.closest('.card') : null;
+  function el(id) { return document.getElementById(id); }
+  function curAudio() { return el(st.src === 'drum' ? 'resAudio' : 'dqAudio'); }
+  function mmss(t) {
+    t = Math.max(0, t || 0);
+    var m = Math.floor(t / 60), s = Math.floor(t - m * 60);
+    return m + ':' + (s < 10 ? '0' : '') + s;
+  }
+  function totalDur() {
+    var a = curAudio();
+    if (a && a.duration && isFinite(a.duration)) return a.duration;
+    var b = st.bars[st.bars.length - 1];
+    return b ? (b.end || b.start + 2) : 0;
   }
 
-  function card() {
-    var c = document.getElementById('dqScore');
-    if (c) return c;
-    var h0 = hostCard();
-    if (!h0 || !h0.parentNode) return null;
-    c = document.createElement('div');
-    c.id = 'dqScore';
-    c.className = 'card';
-    c.style.marginTop = '14px';
-    h0.parentNode.insertBefore(c, h0.nextSibling);
-    /* 只藏旧卡里那张 PDF 预览图，保留播放器与产物按钮，避免两套谱面并列 */
-    Array.prototype.forEach.call(h0.querySelectorAll('img'), function (im) {
-      var src = im.getAttribute('src') || '';
-      if (src.indexOf('/api/pdf/page') >= 0) {
-        /* 只藏这张图本身：外层容器里可能还有试听播放器，别整块隐藏 */
-        im.style.display = 'none';
-      }
-    });
-    /* 顺手把旧卡的"鼓谱预览 共 N 页"标题条也藏掉，避免残留空条 */
-    Array.prototype.forEach.call(h0.querySelectorAll('div'), function (d) {
-      var txt = (d.textContent || '').trim();
-      if (d.children.length <= 3 && txt.indexOf('鼓谱预览') === 0) d.style.display = 'none';
-    });
-    return c;
+  /* ---------- 小节 / 坐标 ---------- */
+  function barAt(t) {
+    for (var i = 0; i < st.bars.length; i++) {
+      var b = st.bars[i], s = b.start, e = b.end || (s + 2);
+      if (t >= s && t < e) return { i: i, frac: (t - s) / Math.max(0.15, e - s) };
+    }
+    /* 还没到第一个小节（前奏留白）：先把光标停在第 1 小节开头 */
+    if (st.bars.length && t < st.bars[0].start) return { i: 0, frac: 0 };
+    return null;
   }
-
-  function build() {
-    var c = card();
-    if (!c || !st.layout || !st.bars.length) return;
-    var pg = st.layout.pages[st.page - 1];
-    if (!pg) return;
-    c.innerHTML =
-      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">' +
-      '<b style="font-size:15px">鼓谱</b><span class="d">播放时光标跟随 · 点小节可跳转</span>' +
-      '<span style="flex:1"></span>' +
-      '<button class="btn ghost sm" id="dqPrevPage">上一页</button>' +
-      '<span class="d" id="dqPageLabel">第 ' + st.page + ' / ' + st.layout.pages.length + ' 页</span>' +
-      '<button class="btn ghost sm" id="dqNextPage">下一页</button>' +
-      '<button class="btn ghost sm" id="dqSavePdf">保存 PDF</button></div>' +
-      '<audio id="dqAudio" controls preload="metadata" style="width:100%;margin:8px 0 10px" src="/api/source?song=' +
-      encodeURIComponent(st.song) + '"></audio>' +
-      '<div id="dqStage" style="position:relative;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;background:#fff">' +
-      '<img id="dqPageImg" style="width:100%;display:block" src="/api/pdf/page?song=' +
-      encodeURIComponent(st.song) + '&page=' + st.page + '&dpi=150" alt="鼓谱">' +
-      '<svg id="dqOverlay" style="position:absolute;left:0;top:0;width:100%;height:100%"></svg></div>';
-    bindChrome();
-    paintOverlay();
-  }
-
-  function bindChrome() {
-    var c = card();
-    var prev = document.getElementById('dqPrevPage'), next = document.getElementById('dqNextPage');
-    var save = document.getElementById('dqSavePdf');
-    if (prev) prev.onclick = function () { st.page = Math.max(1, st.page - 1); build(); };
-    if (next) next.onclick = function () {
-      st.page = Math.min(st.layout.pages.length, st.page + 1); build();
-    };
-    if (save) save.onclick = function () {
-      window.location.href = '/api/download?kind=pdf&song=' + encodeURIComponent(st.song);
-    };
-  }
-
   function barGeo(idx) {
-    /* 全局小节号 -> {page, system, x0, x1, top, bottom} */
     var n = 0;
     for (var p = 0; p < st.layout.pages.length; p++) {
       var pg = st.layout.pages[p];
       for (var si = 0; si < pg.systems.length; si++) {
         var sy = pg.systems[si], bn = sy.bounds.length - 1;
         if (idx >= n && idx < n + bn) {
-          return {page: p + 1, top: sy.top, bottom: sy.bottom,
-                  x0: sy.bounds[idx - n], x1: sy.bounds[idx - n + 1]};
+          var k = idx - n;
+          return { page: p + 1, top: sy.top, bottom: sy.bottom, x0: sy.bounds[k], x1: sy.bounds[k + 1] };
         }
         n += bn;
       }
@@ -2458,98 +2522,281 @@
     return null;
   }
 
-  function paintOverlay() {
-    var img = document.getElementById('dqPageImg'), ov = document.getElementById('dqOverlay');
-    if (!img || !ov) return;
+  /* ---------- 渲染 ---------- */
+  function render() {
+    if (!st.layout || !st.bars.length) return;
+    st.pageCount = st.layout.pages.length || 1;
+    if (st.page > st.pageCount) st.page = st.pageCount;
+    if (st.page < 1) st.page = 1;
     var pg = st.layout.pages[st.page - 1];
-    ov.setAttribute('viewBox', '0 0 ' + pg.w + ' ' + pg.h);
-    ov.innerHTML = '';
-    var t = (st.audio && st.audio.currentTime) || 0;
-    var idx = -1, frac = 0;
-    for (var i = 0; i < st.bars.length; i++) {
-      var b = st.bars[i], s = b.start, e = b.end || (s + 2);
-      if (t >= s && t < e) { idx = i; frac = (t - s) / Math.max(0.2, e - s); break; }
-    }
-    if (idx < 0) { st.cur = -2; return; }
-    var g = barGeo(idx);
-    if (!g || g.page !== st.page) {
-      if (g && g.page !== st.page) { st.page = g.page; build(); }
+    var img = el('dqPageImg'), ov = el('dqOverlay');
+    var src = '/api/pdf/page?song=' + encodeURIComponent(st.song) +
+              '&page=' + st.page + '&dpi=' + DPI[st.zoom];
+    if (img.getAttribute('src') !== src) img.setAttribute('src', src);
+    if (pg) ov.setAttribute('viewBox', '0 0 ' + pg.w + ' ' + pg.h);
+    el('dqPageLabel').textContent = st.page + ' / ' + st.pageCount;
+    el('dqPrevPage').disabled = st.page <= 1;
+    el('dqNextPage').disabled = st.page >= st.pageCount;
+    var zoomed = st.zoom === 'big';
+    el('dqPaper').classList.toggle('zoomed', zoomed);
+    el('dqPaper').classList.toggle('pagefit', st.zoom === 'page');
+    img.style.width = st.zoom === 'page' ? 'auto' : (zoomed ? '190%' : '100%');
+    img.style.height = st.zoom === 'page' ? '100%' : '';
+    el('dqBarTotal').textContent = st.bars.length;
+    el('dqStat').textContent = '共 ' + st.bars.length + ' 小节 · 全长 ' + mmss(totalDur());
+    paint();
+  }
+
+  function paint() {
+    var a = curAudio();
+    var t = a ? (a.currentTime || 0) : 0;
+    var dur = totalDur();
+    /* 播放条 */
+    var f = dur ? Math.min(1, t / dur) : 0;
+    el('dqFill').style.width = (f * 100) + '%';
+    el('dqHead').style.left = (f * 100) + '%';
+    el('dqCur').textContent = mmss(t);
+    el('dqDur').textContent = mmss(dur);
+
+    /* 光标 */
+    var ov = el('dqOverlay');
+    if (!ov || !st.layout) return;
+    var hit = barAt(t);
+    if (!hit) {
+      ov.innerHTML = '';
+      el('dqBarNo').textContent = '–';
+      el('dqBarTime').textContent = '';
+      st.cur = -2;
       return;
     }
-    var pad = (g.bottom - g.top) * 0.18;
+    var g = barGeo(hit.i);
+    if (!g) return;
+    if (g.page !== st.page) { st.page = g.page; render(); scrollToBar(hit.i); return; }
+
+    var b = st.bars[hit.i];
+    el('dqBarNo').textContent = hit.i + 1;
+    el('dqBarTime').textContent = ' · ' + mmss(b.start) + '–' + mmss(b.end || b.start + 2);
+
+    var pad = (g.bottom - g.top) * 0.16;
     var h = g.bottom - g.top + pad * 2, y = g.top - pad;
-    var x = g.x0 + (g.x1 - g.x0) * frac;
+    var x = g.x0 + (g.x1 - g.x0) * hit.frac;
+    var xr = x.toFixed(1);
     ov.innerHTML =
       '<rect x="' + g.x0 + '" y="' + y + '" width="' + (g.x1 - g.x0) + '" height="' + h +
-      '" fill="rgba(13,148,136,0.08)"/>' +
-      '<rect x="' + x.toFixed(1) + '" y="' + y + '" width="2.6" height="' + h +
-      '" fill="#0d9488" opacity="0.95"/>' +
-      '<polygon points="' + x.toFixed(1) + ',' + y + ' ' + (x - 3.5).toFixed(1) + ',' + (y - 6) + ' ' +
-      (x + 3.5).toFixed(1) + ',' + (y - 6) + '" fill="#0d9488"/>';
-    if (idx !== st.cur) st.cur = idx;
+      '" fill="rgba(23,112,138,0.07)"/>' +
+      '<rect x="' + xr + '" y="' + y + '" width="2.4" height="' + h + '" fill="#17a2a2" opacity="0.92"/>' +
+      '<polygon points="' + xr + ',' + y + ' ' + (x - 3.6).toFixed(1) + ',' + (y - 6.5) + ' ' +
+      (x + 3.6).toFixed(1) + ',' + (y - 6.5) + '" fill="#17a2a2"/>';
+    st.cur = hit.i;
   }
 
-  function bindClick() {
-    var ov = document.getElementById('dqOverlay');
-    if (!ov || ov.dataset.bound) return;
-    ov.dataset.bound = '1';
-    ov.addEventListener('click', function (ev) {
-      var img = document.getElementById('dqPageImg');
-      if (!img) return;
-      var r = img.getBoundingClientRect();
-      var pg = st.layout.pages[st.page - 1];
-      var px = (ev.clientX - r.left) / r.width * pg.w;
-      var py = (ev.clientY - r.top) / r.height * pg.h;
-      var n = 0;
-      for (var p = 0; p < st.page; p++) {
-        var page = st.layout.pages[p];
-        for (var si = 0; si < page.systems.length; si++) {
-          var sy = page.systems[si];
-          if (p === st.page - 1 && py >= sy.top - 12 && py <= sy.bottom + 12) {
-            for (var b = 0; b < sy.bounds.length - 1; b++) {
-              if (px >= sy.bounds[b] && px <= sy.bounds[b + 1]) {
-                var idx = n + b;
-                if (st.bars[idx] && st.audio) {
-                  st.audio.currentTime = Math.max(0, st.bars[idx].start + 0.01);
-                  st.audio.play();
-                }
-                return;
-              }
-            }
-          }
-          n += sy.bounds.length - 1;
-        }
-      }
+  /* 换页 / 跳小节后，把当前那行拉到视野里（顶栏 + 播放条下面） */
+  function scrollToBar(idx) {
+    var g = barGeo(idx), img = el('dqPageImg'), pg = st.layout.pages[st.page - 1];
+    if (!g || !img || !pg) return;
+    var r = img.getBoundingClientRect();
+    var k = r.width / pg.w;                 /* viewBox -> CSS px */
+    if (!k) return;
+    var baseY = r.top + window.scrollY;
+    var top = baseY + (g.top - 24) * k;
+    var bottom = baseY + (g.bottom + 24) * k;
+    var vTop = window.scrollY + 130;        /* 顶栏 56 + 播放条 ~62 */
+    var vBottom = window.scrollY + window.innerHeight - 30;
+    if (top < vTop || bottom > vBottom) {
+      try { window.scrollTo({ top: Math.max(0, top - 150), behavior: 'smooth' }); }
+      catch (e) { window.scrollTo(0, Math.max(0, top - 150)); }
+    }
+  }
+
+  /* ---------- 播放 ---------- */
+  var raf = 0;  function loop() { raf = requestAnimationFrame(loop); paint(); }
+  function startLoop() { if (!raf) loop(); }
+  function stopLoop() { if (raf) { cancelAnimationFrame(raf); raf = 0; } }
+
+  function syncPlay() {
+    var a = curAudio();
+    var on = !!(a && !a.paused);
+    st.playing = on;
+    el('dqPlay').textContent = on ? '❚❚' : '▶';
+    if (on) startLoop(); else { stopLoop(); paint(); }
+  }
+
+  function bindAudio(a) {
+    if (!a || a.dataset.dq) return;
+    a.dataset.dq = '1';
+    a.addEventListener('play', syncPlay);
+    a.addEventListener('pause', syncPlay);
+    a.addEventListener('ended', syncPlay);
+    a.addEventListener('timeupdate', function () { if (!st.playing) paint(); });
+    a.addEventListener('loadedmetadata', paint);
+    a.addEventListener('durationchange', paint);
+  }
+
+  function togglePlay() {
+    var a = curAudio();
+    if (!a) return;
+    if (!a.paused) { a.pause(); return; }
+    if (!a.getAttribute('src')) { return; }
+    var p = a.play();
+    if (p && p.catch) p.catch(function () {});
+  }
+
+  function seek(t) {
+    var a = curAudio();
+    if (!a) return;
+    try { a.currentTime = Math.max(0, t); } catch (e) {}
+    paint();
+  }
+
+  function goBar(idx) {
+    if (idx < 0 || idx >= st.bars.length) return;
+    var on = st.playing;
+    seek(st.bars[idx].start + 0.02);
+    if (on) { var a = curAudio(); if (a && a.paused) { var p = a.play(); if (p && p.catch) p.catch(function () {}); } }
+  }
+
+  function switchSrc(which) {
+    if (which === st.src) return;
+    var from = curAudio();
+    var t = from ? (from.currentTime || 0) : 0;
+    var wasPlaying = !!(from && !from.paused);
+    if (from) from.pause();
+    if (which === 'drum' && !el('resAudio').getAttribute('src')) {
+      return; /* 这次没生成鼓声 */
+    }
+    st.src = which;
+    Array.prototype.forEach.call(document.querySelectorAll('#dqSrc button'), function (b) {
+      b.classList.toggle('on', b.dataset.src === which);
     });
+    var to = curAudio();
+    bindAudio(to);
+    var apply = function () {
+      try { to.currentTime = Math.min(t, to.duration || t); } catch (e) {}
+      if (wasPlaying) { var p = to.play(); if (p && p.catch) p.catch(function () {}); }
+      paint();
+    };
+    if (to.readyState >= 1) apply();
+    else to.addEventListener('loadedmetadata', apply, { once: true });
+    paint();
   }
 
+  /* ---------- 交互 ---------- */
+  function onStageClick(ev) {
+    var img = el('dqPageImg'), pg = st.layout.pages[st.page - 1];
+    if (!img || !pg) return;
+    var r = img.getBoundingClientRect();
+    var px = (ev.clientX - r.left) / r.width * pg.w;
+    var py = (ev.clientY - r.top) / r.height * pg.h;
+    var n = 0;
+    for (var si = 0; si < pg.systems.length; si++) {
+      var sy = pg.systems[si];
+      if (py >= sy.top - 14 && py <= sy.bottom + 14) {
+        for (var b = 0; b < sy.bounds.length - 1; b++) {
+          if (px >= sy.bounds[b] && px <= sy.bounds[b + 1]) {
+            var idx = n + b;
+            if (st.bars[idx]) goBar(idx);
+            return;
+          }
+        }
+        return;
+      }
+      n += sy.bounds.length - 1;
+    }
+  }
+
+  function bindChrome() {
+    var ov = el('dqOverlay');
+    if (ov && !ov.dataset.b) { ov.dataset.b = '1'; ov.addEventListener('click', onStageClick); }
+
+    var play = el('dqPlay');
+    if (play && !play.dataset.b) { play.dataset.b = '1'; play.onclick = togglePlay; }
+
+    el('dqPrevPage').onclick = function () { if (st.page > 1) { st.page--; render(); } };
+    el('dqNextPage').onclick = function () { if (st.page < st.pageCount) { st.page++; render(); } };
+    el('dqZoom').onchange = function () { st.zoom = this.value; render(); };
+    el('dqPrevBar').onclick = function () { goBar(Math.max(0, (barAt((curAudio() || {}).currentTime || 0) || { i: 0 }).i - 1)); };
+    el('dqNextBar').onclick = function () {
+      var h = barAt((curAudio() || {}).currentTime || 0);
+      goBar(h ? h.i + 1 : 0);
+    };
+    Array.prototype.forEach.call(document.querySelectorAll('#dqSrc button'), function (b) {
+      b.onclick = function () { switchSrc(b.dataset.src); };
+    });
+
+    /* 拖动 / 点击进度条 */
+    var sc = el('dqScrub'), dragging = false;
+    function fromEv(ev) {
+      var r = sc.getBoundingClientRect();
+      var f = Math.min(1, Math.max(0, (ev.clientX - r.left) / Math.max(1, r.width)));
+      seek(f * totalDur());
+    }
+    sc.addEventListener('pointerdown', function (ev) {
+      dragging = true;
+      try { sc.setPointerCapture(ev.pointerId); } catch (e) {}
+      fromEv(ev);
+    });
+    sc.addEventListener('pointermove', function (ev) { if (dragging) fromEv(ev); });
+    sc.addEventListener('pointerup', function (ev) {
+      dragging = false;
+      try { sc.releasePointerCapture(ev.pointerId); } catch (e) {}
+    });
+    sc.addEventListener('pointercancel', function () { dragging = false; });
+
+    if (!document.body.dataset.dqKeys) {
+      document.body.dataset.dqKeys = '1';
+      document.addEventListener('keydown', function (ev) {
+        var tag = (ev.target && ev.target.tagName) || '';
+        if (/^(INPUT|SELECT|TEXTAREA)$/.test(tag)) return;
+        if (el('dqScore').hidden) return;
+        if (ev.code === 'Space') { ev.preventDefault(); togglePlay(); }
+        else if (ev.key === 'ArrowLeft') { ev.preventDefault(); if (st.page > 1) { st.page--; render(); } }
+        else if (ev.key === 'ArrowRight') { ev.preventDefault(); if (st.page < st.pageCount) { st.page++; render(); } }
+        else if (ev.key === ',') { var h = barAt((curAudio() || {}).currentTime || 0); goBar(h ? h.i - 1 : 0); }
+        else if (ev.key === '.') { var h2 = barAt((curAudio() || {}).currentTime || 0); goBar(h2 ? h2.i + 1 : 0); }
+      });
+    }
+  }
+
+  /* ---------- 数据 ---------- */
   function load() {
     fetch('/api/status').then(function (r) { return r.json(); }).then(function (s) {
-      if (!s || !s.song || s.running) return;
+      if (!s || s.running || !s.song) return;
+      var hasPdf = (s.results || []).some(function (r) { return r.kind === 'pdf'; });
+      if (!hasPdf) return;
       var k = s.song + '|' + (s.finished || '');
       if (k === st.key) return;
-      st.song = s.song;
+      st.key = k;
+      /* 换歌：先撤掉「已就绪」，避免在新数据到之前短暂露出上一首的谱面 */
+      var prev = el('dqScore');
+      if (prev) prev.removeAttribute('data-ready');
       Promise.all([
         fetch('/api/scoremap?song=' + encodeURIComponent(s.song)).then(function (r) { return r.ok ? r.json() : null; }),
         fetch('/api/scorelayout?song=' + encodeURIComponent(s.song)).then(function (r) { return r.ok ? r.json() : null; })
       ]).then(function (res) {
         var sm = res[0], lo = res[1];
-        if (!sm || !sm.ok || !lo || !lo.ok) return;
-        st.base = sm.base; st.bars = sm.bars; st.layout = lo; st.key = k; st.page = 1; st.cur = -2;
-        setTimeout(function () {
-          build();
-          bindClick();
-          st.audio = document.getElementById('dqAudio') || document.getElementById('resAudio');
-          if (st.audio && !st.audio.dataset.dqBound) {
-            st.audio.dataset.dqBound = '1';
-            st.audio.addEventListener('timeupdate', paintOverlay);
-          }
-        }, 80);
-      }).catch(function () {});
+        if (!sm || !sm.ok || !lo || !lo.ok || !lo.pages || !lo.pages.length) { st.key = ''; return; }
+        st.song = s.song;
+        st.bars = sm.bars || [];
+        st.layout = lo;
+        st.page = 1;
+        st.cur = -2;
+        var card = el('dqScore');
+        var mix = el('dqAudio');
+        var want = '/api/source?song=' + encodeURIComponent(s.song);
+        if (mix.getAttribute('src') !== want) mix.setAttribute('src', want);
+        bindAudio(mix);
+        bindAudio(el('resAudio'));
+        bindChrome();
+        card.dataset.ready = '1';
+        var done = el('viewDone');
+        card.hidden = !(done && !done.hidden);
+        render();
+      }).catch(function () { st.key = ''; });
     }).catch(function () {});
   }
-  setInterval(load, 3000);
-  setTimeout(load, 1500);
+
+  setInterval(load, 2500);
+  setTimeout(load, 800);
 })();
 </script>
 </body>
