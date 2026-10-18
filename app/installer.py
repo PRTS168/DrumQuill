@@ -142,7 +142,7 @@ SIZE_DEMUCS_TH = 84141911
 SIZE_ADTOF_PTH = 3617805
 SIZE_SF3 = 51278610
 SIZE_FFMPEG_EXE = 82797568
-PIP_KEY_IMPORTS = ["torch", "demucs", "librosa", "pretty_midi", "numpy", "soundfile", "flask", "requests"]
+PIP_KEY_IMPORTS = ["torch", "demucs", "beat_this", "librosa", "pretty_midi", "numpy", "soundfile", "flask", "requests"]
 PIP_OPT_IMPORTS = ["webview", "reportlab", "cairosvg"]
 
 # ---------------- 全局状态 ----------------

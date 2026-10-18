@@ -48,6 +48,10 @@
   // 所以默认 2，内存吃紧时改 1。走 GPU 时此值不生效（GPU 固定单进程）。
   "demucsJobs": 2,
 
+  // 拍栅格：true（默认）= 用 Beat This 跟踪真实拍点与小节线，速度漂移也能跟住；
+  //          false = 回到"全曲一个 BPM + 小节相位搜索"的旧路线
+  "beatGrid": true,
+
   // 分离设备：auto（默认：有可用 CUDA 就用 GPU，失败自动回落 CPU）| cpu | cuda
   // 网页「01 输入音频 → 分离设备」也能直接切，会写入这里。
   "demucsDevice": "auto",

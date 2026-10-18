@@ -15,6 +15,7 @@ type 与 duration 对不上、64 分碎片、小节被拆散）：
 
 输出前会打印校验结果，任何一条不满足都会以非零码退出。
 """
+import os
 import sys
 from collections import defaultdict
 
@@ -27,6 +28,16 @@ TITLE = sys.argv[4] if len(sys.argv) > 4 else "Drum Score"
 MARKERS_FILE = sys.argv[5] if len(sys.argv) > 5 and sys.argv[5] not in ("", "-") else None
 BARS_PER_LINE = int(sys.argv[6]) if len(sys.argv) > 6 else 4
 GRID = int(sys.argv[7]) if len(sys.argv) > 7 else 16
+PLAN_PATH = sys.argv[8] if len(sys.argv) > 8 and sys.argv[8] not in ("", "-") else os.environ.get("DRUM_BEAT_PLAN", "")
+PLAN = None
+if PLAN_PATH and os.path.isfile(PLAN_PATH):
+    import json as _json
+    try:
+        with open(PLAN_PATH, encoding="utf-8") as _f:
+            PLAN = _json.load(_f)
+    except Exception as _e:
+        print("[!] plan.json 读取失败（%s），退回固定 BPM 模式" % _e)
+        PLAN = None
 
 if not MIDI or not OUT:
     print("usage: gen_musicxml.py <in.mid> <out.musicxml> [bpm] [title] [markers] [bars_per_line] [grid]")
@@ -35,7 +46,8 @@ if not MIDI or not OUT:
 DIV = 480                     # 每四分音符 tick
 BEAT_S = 60.0 / BPM
 BAR_S = BEAT_S * 4
-BAR_TICKS = DIV * 4           # 1920
+BAR_TICKS = DIV * 4           # 1920（plan 模式下按拍号重算）
+METER = 4
 
 # 网格单元（tick）
 if GRID not in (4, 8, 16, 32):
@@ -104,6 +116,80 @@ def quantize(raw):
         slot = cells[(bar, tick)]
         slot[pitch] = max(slot.get(pitch, 0), vel)
     return cells
+
+
+# 律动先验：用在"小节旋转"打分上（鼓组常见落点）
+KICK, SNARE, HI, TOM, CYMBAL = 35, 38, 42, 47, 49
+
+
+def groove_score(cells, rot):
+    """给定小节旋转（十六分格数），返回该旋转下的律动合理度。"""
+    score = 0.0
+    for (_bar, tick), pitches in cells.items():
+        pass
+    return score
+
+
+def best_rotation(cells):
+    """枚举 16 种小节旋转，返回 (最优旋转格数, 分数表)。"""
+    grid = BAR_TICKS // CELL
+    scores = []
+    for rot in range(grid):
+        sc = 0.0
+        for (bar, tick), pitches in cells.items():
+            abs_tick = bar * BAR_TICKS + tick
+            g = ((abs_tick - rot * CELL) % BAR_TICKS) // CELL     # 旋转后落在第几格
+            beat = g % 4                                          # 拍内第几个十六分
+            for pitch, _vel in pitches.items():
+                if pitch == KICK:
+                    sc += 1.2 if g == 0 else (1.0 if g == 8 else (0.3 if g % 2 == 0 else 0.0))
+                elif pitch == SNARE:
+                    sc += 1.0 if g in (4, 12) else (0.2 if g in (5, 13) else -0.15)
+                elif pitch == CYMBAL:
+                    sc += 2.0 if g == 0 else (0.6 if g == 8 else -0.6)
+                elif pitch == HI:
+                    sc += 0.5 if g % 2 == 0 else 0.0
+                elif pitch == TOM:
+                    sc += 0.3 if g >= 12 or g <= 1 else 0.0
+        scores.append((round(sc, 3), rot))
+    scores.sort(reverse=True)
+    return scores[0][1], scores
+
+
+SIGMA_CELL = 0.35
+TARGETS = {
+    KICK: {0: 1.2, 8: 1.0, 4: 0.4, 12: 0.4},
+    SNARE: {4: 1.0, 12: 1.0},
+    CYMBAL: {0: 1.8, 8: 0.5},
+    HI: {0: 0.5, 2: 0.5, 4: 0.5, 6: 0.5, 8: 0.5, 10: 0.5, 12: 0.5, 14: 0.5},
+    TOM: {14: 0.3, 15: 0.3, 0: 0.3, 1: 0.3},
+}
+
+
+def continuous_groove(raw, rot_cells):
+    """连续律动评分：按"到期望格的加权重合度"累加，避免半格翻转。"""
+    import math
+    grid = BAR_TICKS / float(CELL)
+    total = 0.0
+    for pitch, start, _vel in raw:
+        if pitch not in DRUM_MAP:
+            continue
+        pos = ((start / BEAT_S * DIV - rot_cells * CELL) % BAR_TICKS) / CELL
+        targets = TARGETS.get(pitch)
+        if not targets:
+            continue
+        best = 0.0
+        for target, w in targets.items():
+            d = abs((pos - target + grid / 2.0) % grid - grid / 2.0)
+            best = max(best, w * math.exp(-(d * d) / (2.0 * SIGMA_CELL * SIGMA_CELL)))
+        total += best
+    return total
+
+
+def best_rotation(raw):
+    scores = [(round(continuous_groove(raw, r), 3), r) for r in range(16)]
+    scores.sort(reverse=True)
+    return scores[0][1], scores
 
 
 def build_measures(cells):
@@ -191,6 +277,7 @@ def load_markers(path):
 
 def emit(measures, markers, n_bars):
     x = []
+    _last_tempo = [None]
     x.append('<?xml version="1.0" encoding="UTF-8"?>')
     x.append('<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 3.1 Partwise//EN" '
              '"http://www.musicxml.org/dtds/partwise.dtd">')
@@ -221,12 +308,25 @@ def emit(measures, markers, n_bars):
         if bar == 0:
             x.append('      <attributes>')
             x.append('        <divisions>%d</divisions>' % DIV)
-            x.append('        <time><beats>4</beats><beat-type>4</beat-type></time>')
+            x.append('        <time><beats>%d</beats><beat-type>4</beat-type></time>' % METER)
             x.append('        <clef><sign>percussion</sign></clef>')
             x.append('      </attributes>')
-            x.append('      <direction placement="above"><direction-type>'
-                     '<metronome><beat-unit>quarter</beat-unit><per-minute>%.0f</per-minute></metronome>'
-                     '</direction-type><sound tempo="%.1f"/></direction>' % (BPM, BPM))
+            if not PLAN:
+                x.append('      <direction placement="above"><direction-type>'
+                         '<metronome><beat-unit>quarter</beat-unit><per-minute>%.0f</per-minute></metronome>'
+                         '</direction-type><sound tempo="%.1f"/></direction>' % (BPM, BPM))
+        if PLAN:
+            try:
+                bpm_bar = float(PLAN["bars"][bar]["bpm"])
+            except Exception:
+                bpm_bar = BPM
+            prev = _last_tempo[0]
+            if prev is None or abs(bpm_bar - prev) > max(0.3, prev * 0.003):
+                x.append('      <direction placement="above"><direction-type>'
+                         '<metronome parentheses="yes"><beat-unit>quarter</beat-unit>'
+                         '<per-minute>%.0f</per-minute></metronome></direction-type>'
+                         '<sound tempo="%.1f"/></direction>' % (bpm_bar, bpm_bar))
+                _last_tempo[0] = bpm_bar
         if (bar + 1) in markers:
             x.append('      <direction placement="above"><direction-type>'
                      '<words font-weight="bold">%s</words></direction-type></direction>' % markers[bar + 1])
@@ -283,8 +383,27 @@ def main():
     cells = quantize(raw)
     if not cells:
         raise SystemExit("[!] 量化后没有任何可记谱的鼓件（检查音高映射）")
+    if PLAN:
+        globals()["METER"] = int(PLAN.get("meter") or 4)
+        globals()["BAR_TICKS"] = DIV * globals()["METER"]
+        # 小节来自真实强拍，但拍内相位仍可能有整拍级偏差 -> 用鼓类先验在 16 个偏移里再校一次
+        rot, rot_scores = best_rotation(raw)
+        print("拍栅格模式：%d 小节，%d/4，中位速度 %.1f BPM（栅格来自真实拍点，不做相位搜索）"
+              % (int(PLAN.get("n_bars") or 0), METER, float(PLAN.get("bpm_median") or 0)))
+    else:
+        rot, rot_scores = best_rotation(raw)
+    if rot:
+        shifted = {}
+        for (bar, tick), pitches in cells.items():
+            abs_tick = bar * BAR_TICKS + tick - rot * CELL
+            if abs_tick < 0:
+                abs_tick += BAR_TICKS * ((-abs_tick) // BAR_TICKS + 1)
+            shifted[divmod(abs_tick, BAR_TICKS)] = pitches
+        cells = shifted
+        print("bar rotation: %d 个十六分（%.0f ms），候选前 3：%s"
+              % (rot, rot * CELL * BEAT_S / DIV * 1000, rot_scores[:3]))
     measures, stats = build_measures(cells)
-    n_bars = max(cells)[0] + 1
+    n_bars = int(PLAN["n_bars"]) if PLAN else (max(cells)[0] + 1)
 
     problems = validate(measures)
     if problems:
@@ -302,7 +421,9 @@ def main():
     print("bars: %d  notes: %d  accents: %d  ghosts: %d  grid: 1/%d  (accent>=%d, ghost<=%d)"
           % (n_bars, stats["notes"], stats["accents"], stats["ghosts"], GRID,
              ACCENT_VEL, GHOST_VEL))
-    print("校验通过：每小节时值合计 %d，时值全部合法，type 与时值一致" % BAR_TICKS)
+    _meter = globals()["METER"]
+    print("校验通过：每小节时值合计 %d，时值合法，type 与时值一致（%d 小节，%d/4%s）"
+          % (globals()["BAR_TICKS"], n_bars, _meter, "，拍栅格模式" if PLAN else "，小节相位已按律动对齐"))
     print("saved:", OUT)
     return 0
 

@@ -360,23 +360,88 @@ if ($postDedupe -gt 0 -or $postMinLen -gt 0) {
     }
 }
 
+# ---------- 3c. 速度八度校验（避免 74 BPM 的歌被当成 148）-------------------
+# 判据：军鼓踩 2、4 拍 -> 相邻军鼓间隔应接近 2 拍；检测值若偏快一倍，间隔会算成 4 拍。
+$bpmSanity = "$(Cfg 'bpmSanity' 'true')" -ne "false"
+if ($bpmSanity -and (Test-Path (Join-Path $scrDir "choose_bpm.py"))) {
+    $bpmJson = & $venvPy (Join-Path $scrDir "choose_bpm.py") $rawMid $BPM --json 2>$null | Select-Object -Last 1
+    if ($bpmJson -and $bpmJson.Trim().StartsWith("{")) {
+        try {
+            $bpmInfo = $bpmJson | ConvertFrom-Json
+            if ($bpmInfo.chosen -and [math]::Abs([double]$bpmInfo.chosen - $BPM) -gt 0.5) {
+                $oldBpm = $BPM
+                $BPM = [double]$bpmInfo.chosen
+                $how = [string]$bpmInfo.label
+                if ($how -like "*half*") {
+                    Write-Host "[*] 速度八度校验：检测 $oldBpm 判为偏快一倍（军鼓间隔 $($bpmInfo.snare_interval_s) 秒 ≈4 拍），改用 $BPM BPM"
+                } elseif ($how -like "*double*") {
+                    Write-Host "[*] 速度八度校验：检测 $oldBpm 判为偏慢一倍（军鼓间隔 $($bpmInfo.snare_interval_s) 秒 ≈1 拍），改用 $BPM BPM"
+                } else {
+                    Write-Host "[*] 速度精调：检测 $oldBpm → 按起音贴合度校正为 $BPM BPM $($bpmInfo.refit)"
+                }
+            } else {
+                Write-Host "[*] 速度校验：$BPM BPM 通过（军鼓间隔 $($bpmInfo.snare_interval_s) 秒）"
+            }
+        } catch {
+            Write-Host "[!] 速度八度校验结果解析失败，沿用 $BPM BPM"
+        }
+    }
+}
+
+# ---------- 3d. 拍栅格对齐（Beat This）:/ 按真实拍点量化，替代固定 BPM ------
+$beatGrid = "$(Cfg 'beatGrid' 'true')" -ne "false"
+$beatsJson = Join-Path $midiDir "$song.beats.json"
+$planJson  = Join-Path $midiDir "$song.beats_plan.json"
+$beatAligned = $false
+if ($beatGrid -and (Test-Path (Join-Path $scrDir "track_beats.py")) -and (Test-Path (Join-Path $scrDir "align_to_beats.py"))) {
+    if (-not (Test-Path $beatsJson)) {
+        Write-Host "[*] 跟踪节拍与强拍（Beat This，一次约 30 秒，结果会缓存）..."
+        & $venvPy (Join-Path $scrDir "track_beats.py") $SongPath $beatsJson 2>&1 | Select-Object -Last 2 | ForEach-Object { Write-Host "    $_" }
+    }
+    if (Test-Path $beatsJson) {
+        $bgMid = Join-Path $midiDir "$song.beats.mid"
+        $bgAl  = Join-Path $midiDir "$song.beats_al.mid"
+        & $venvPy (Join-Path $scrDir "align_to_beats.py") $rawMid $beatsJson $bgMid $planJson
+        if ($LASTEXITCODE -eq 0 -and (Test-Path $bgMid)) {
+            $beatAligned = $true
+            if (Test-Path $planJson) {
+                try { $planInfo = Get-Content $planJson -Raw -Encoding UTF8 | ConvertFrom-Json
+                      if ($planInfo.bpm_median) { $BPM = [double]$planInfo.bpm_median } } catch {}
+            }
+            Write-Host "[*] 已按真实拍点对齐（跳过固定 BPM 量化与小节相位搜索）"
+        } else {
+            Write-Host "[!] 拍栅格对齐失败，回落到固定 BPM 路线"
+        }
+    }
+}
+
 # ---------- 4. tempo/align/musicxml chain (no data fallback, friendly exit) -
 $bpmInt = [int]$BPM
 $bpmMid = Join-Path $midiDir "${song}_${bpmInt}.mid"
 $alMid  = Join-Path $midiDir "${song}_${bpmInt}_al.mid"
+if ($beatAligned) {
+    $bpmMid = Join-Path $midiDir "$song.beats.mid"
+    $alMid  = Join-Path $midiDir "$song.beats_al.mid"
+}
 $xml    = Join-Path $outDir "$song.musicxml"
 Write-Host "[4/6] 校正速度与小节线（@ $BPM BPM）..."
+if (-not $beatAligned) {
 & $venvPy (Join-Path $scrDir "fix_tempo_tick.py") $rawMid $bpmMid $BPM
 if ($LASTEXITCODE -ne 0) {
     Write-Host "[!] fix_tempo_tick 失败（exit $LASTEXITCODE）—— MIDI 数据无法降级处理。请把上方输出发给开发者；中间文件在 $midiDir。"
     exit 1
+}
 }
 # 量化：相位对齐 + 软吸附（只吸偏离栅格 <tol 的音符）。实测硬吸附会掉 6.5 点 F1，
 # 软吸附 tol=0.25 时与"完全不量化"的准确度一致，同时约 55% 音符精确落在整数 16 分上。
 $quantTol = [double](Cfg "quantizeTol" 0.25)
 if ($quantTol -lt 0) { $quantTol = 0 }
 if ($quantTol -gt 0.5) { $quantTol = 0.5 }
-& $venvPy (Join-Path $scrDir "fix_align.py") $bpmMid $alMid $BPM --auto --tol $quantTol
+if (-not $beatAligned) {
+    & $venvPy (Join-Path $scrDir "fix_align.py") $bpmMid $alMid $BPM --auto --tol $quantTol
+} else {
+    Copy-Item $bpmMid $alMid -Force
+}
 if ($LASTEXITCODE -eq 0 -and $postSwing -gt 0 -and (Test-Path $alMid)) {
     $swTmp = Join-Path $midiDir "$song._swing.mid"
     & $venvPy (Join-Path $scrDir "postprocess.py") $alMid $swTmp --dedupe-ms 0 --min-len-ms 0 --swing $postSwing
@@ -390,7 +455,11 @@ if ($LASTEXITCODE -ne 0) {
 if ($SkipScore) {
     Write-Host "[4/6] 已跳过乐谱生成（模式：只要音频/鼓声）—— 仍会校正速度与对齐，供音频合成使用。"
 } else {
-    & $venvPy (Join-Path $scrDir "gen_musicxml.py") $alMid $xml $BPM "$song"
+    if ($beatAligned -and (Test-Path $planJson)) {
+        & $venvPy (Join-Path $scrDir "gen_musicxml.py") $alMid $xml $BPM "$song" "-" 4 16 $planJson
+    } else {
+        & $venvPy (Join-Path $scrDir "gen_musicxml.py") $alMid $xml $BPM "$song"
+    }
     if ($LASTEXITCODE -ne 0) {
         Write-Host "[!] gen_musicxml 失败（exit $LASTEXITCODE）—— 请把上方输出发给开发者；中间 MIDI：$alMid。"
         exit 1

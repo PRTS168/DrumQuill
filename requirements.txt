@@ -58,3 +58,6 @@ tqdm==4.70.1
 
 # --- ADTOF-pytorch（鼓音转录，不在 PyPI，按锁定提交从 GitHub 安装）---
 adtof-pytorch @ git+https://github.com/xavriley/ADTOF-pytorch@85c192e78f716ea0b111cc8a5ee4a8f6a3a4f8a9
+
+# --- Beat This!（节拍/强拍跟踪，用于建立真实拍栅格；模型首次运行自动下载约 77MB）---
+beat_this>=1.1.0
