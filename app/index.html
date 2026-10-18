@@ -435,6 +435,19 @@
   .barnav .cur{color:var(--accent-ink);font-weight:600}
   .barnav audio{display:none}
 
+  /* 动态谱（自绘鼓谱 + 播放头） */
+  .tabwrap{background:#fff}
+  .tabscroll{position:relative;max-height:min(66vh,620px);overflow-y:auto;padding-bottom:10px;scroll-behavior:smooth}
+  .tabrow{position:relative;height:90px;overflow:hidden}
+  .tabrow svg{display:block}
+  .tabrow+.tabrow{border-top:1px solid #f3f5f7}
+  .tabrow.cur{background:rgba(34,197,94,.045)}
+  .phcol{position:absolute;border:2px solid #22c55e;background:rgba(34,197,94,.13);border-radius:9px;
+    pointer-events:none;box-sizing:border-box;z-index:2}
+  .phline{position:absolute;width:1.5px;background:rgba(34,197,94,.9);pointer-events:none;z-index:1}
+  .vmseg{height:30px}
+  .vmseg button{font-size:12px;padding:0 12px}
+
   /* 产物 */
   .prod{padding:4px 20px 12px}
   .prod .dlrow{border-bottom:1px solid var(--line-soft);padding:9px 0}
@@ -589,20 +602,24 @@
     <div class="score-head">
       <div>
         <h1>鼓谱</h1>
-        <div class="sh-sub">与打印版同一张谱 · 播放时光标自动跟随 · 点任意小节跳到那里</div>
+        <div class="sh-sub" id="dqSub">动态谱 · 绿色播放头跟着音乐走 · 点任意位置跳转</div>
       </div>
       <div class="sh-tools">
-        <span class="pgnav">
+        <div class="seg vmseg" id="dqViewMode">
+          <button data-view="tab" class="on">动态谱</button>
+          <button data-view="pdf">打印版</button>
+        </div>
+        <span class="pgnav" id="dqPdfTools" hidden>
           <button class="btn ghost sm" id="dqPrevPage" title="上一页（←）">‹</button>
           <span class="pv-page" id="dqPageLabel">1 / 1</span>
           <button class="btn ghost sm" id="dqNextPage" title="下一页（→）">›</button>
+          <select class="inp" id="dqZoom" title="清晰度">
+            <option value="fit">适应宽度</option>
+            <option value="page">适应整页</option>
+            <option value="hd">高清</option>
+            <option value="big">放大</option>
+          </select>
         </span>
-        <select class="inp" id="dqZoom" title="清晰度">
-          <option value="fit">适应宽度</option>
-          <option value="page">适应整页</option>
-          <option value="hd">高清</option>
-          <option value="big">放大</option>
-        </select>
       </div>
     </div>
 
@@ -610,7 +627,7 @@
       <button class="tplay" id="dqPlay" title="播放 / 暂停（空格）">▶</button>
       <div class="ttime"><span id="dqCur">0:00</span><span class="sep">/</span><span id="dqDur">0:00</span></div>
       <div class="tscrub" id="dqScrub" title="拖动定位（也可直接点谱面）">
-        <div class="tfill" id="dqFill"></div><div class="thead" id="dqHead"></div>
+        <div class="tfill" id="dqFill"></div><div class="thead" id="dqHeadPtr"></div>
       </div>
       <div class="seg srcseg" id="dqSrc">
         <button data-src="mix" class="on" title="原曲音频：拍点就是从它算出来的，跟谱最准">原曲</button>
@@ -618,7 +635,13 @@
       </div>
     </div>
 
-    <div class="paper" id="dqPaper">
+    <div class="note warn" id="dqWarn" hidden style="margin:10px 20px 0"></div>
+
+    <div class="tabwrap" id="dqTab">
+      <div class="tabscroll" id="dqScroll"></div>
+    </div>
+
+    <div class="paper" id="dqPaper" hidden>
       <div class="pg" id="dqStage">
         <img id="dqPageImg" alt="鼓谱">
         <svg id="dqOverlay"></svg>
@@ -2472,18 +2495,23 @@
 })();
 </script>
 <script>
-/* ===== 谱面工作台：就是那张 PDF + 光标 + 播放条 ===== */
+/* ===== 谱面工作台：动态谱（自绘鼓谱 + 绿色播放头）+ 打印版 PDF ===== */
 (function () {
   'use strict';
+  var el = function (id) { return document.getElementById(id); };
   var st = {
-    song: '', bars: [], layout: null, page: 1, cur: -2,
-    zoom: 'fit', src: 'mix', key: '', playing: false, pageCount: 1
+    song: '', bars: [], layout: null, page: 1, zoom: 'fit', src: 'mix', key: '',
+    playing: false, view: 'tab', bpr: 2, gutter: 34, barW: 0, rows: 0,
+    hit: null, lastRow: -1
   };
   var DPI = { fit: 150, page: 200, hd: 200, big: 320 };
-  var $ = function (s) { return document.querySelector(s); };
+  /* 鼓谱几何（像素，行高固定，宽度随容器） */
+  var GAP = 8, STAFF_TOP = 40, BEAM_Y = 20, ROW_H = 90;
+  var LINE_BOTTOM = STAFF_TOP + GAP * 4;
 
-  function el(id) { return document.getElementById(id); }
+  /* ---------- 工具 ---------- */
   function curAudio() { return el(st.src === 'drum' ? 'resAudio' : 'dqAudio'); }
+  function time() { var a = curAudio(); return a ? (a.currentTime || 0) : 0; }
   function mmss(t) {
     t = Math.max(0, t || 0);
     var m = Math.floor(t / 60), s = Math.floor(t - m * 60);
@@ -2495,18 +2523,164 @@
     var b = st.bars[st.bars.length - 1];
     return b ? (b.end || b.start + 2) : 0;
   }
-
-  /* ---------- 小节 / 坐标 ---------- */
   function barAt(t) {
     for (var i = 0; i < st.bars.length; i++) {
       var b = st.bars[i], s = b.start, e = b.end || (s + 2);
-      if (t >= s && t < e) return { i: i, frac: (t - s) / Math.max(0.15, e - s) };
+      if (t >= s && t < e) return { i: i, frac: Math.min(0.999, (t - s) / Math.max(0.15, e - s)) };
     }
-    /* 还没到第一个小节（前奏留白）：先把光标停在第 1 小节开头 */
     if (st.bars.length && t < st.bars[0].start) return { i: 0, frac: 0 };
     return null;
   }
+
+  /* ---------- 动态谱渲染 ---------- */
+  function drumY(cls) {
+    if (cls === 'hihat' || cls === 'cymbal') return STAFF_TOP;
+    if (cls === 'tom') return STAFF_TOP + GAP;
+    if (cls === 'snare') return STAFF_TOP + GAP * 2;
+    if (cls === 'kick') return STAFF_TOP + GAP * 4;
+    return STAFF_TOP + GAP * 2;
+  }
+  function xGlyph(x, y) {
+    return '<path d="M' + (x - 3.9) + ' ' + (y - 3.9) + 'L' + (x + 3.9) + ' ' + (y + 3.9) +
+      'M' + (x - 4.4) + ' ' + (y + 3.9) + 'L' + (x + 4.4) + ' ' + (y - 4.4) +
+      '" stroke="#2b333a" stroke-width="1.4" fill="none" stroke-linecap="round"/>';
+  }
+  function headSVG(cls, x, y) {
+    if (cls === 'hihat') return xGlyph(x, y);
+    if (cls === 'cymbal') {
+      return '<circle cx="' + x + '" cy="' + y + '" r="5.2" fill="none" stroke="#2b333a" stroke-width="1.1"/>' +
+        xGlyph(x, y);
+    }
+    return '<ellipse cx="' + x + '" cy="' + y + '" rx="4.2" ry="3.1" fill="#2b333a"/>';
+  }
+  function notesSVG(bar, bx, barW) {
+    var unit = barW / 16, out = [], byP = {}, ps = [], p, b;
+    (bar.notes || []).forEach(function (n) {
+      var q = Math.max(0, Math.min(15, n.p | 0));
+      (byP[q] = byP[q] || []).push(n);
+    });
+    ps = Object.keys(byP).map(Number).sort(function (a, b) { return a - b; });
+    ps.forEach(function (q) {
+      var x = bx + (q + 0.5) * unit;
+      var ys = byP[q].map(function (n) { return drumY(n.c); });
+      /* 同一列多个鼓共用一根符干：从最低的音符头一路连到符杠 */
+      var bot = Math.max.apply(null, ys);
+      out.push('<line x1="' + x + '" y1="' + (bot + 2) + '" x2="' + x + '" y2="' + BEAM_Y +
+        '" stroke="#3a444c" stroke-width="1.2"/>');
+      byP[q].forEach(function (n) { out.push(headSVG(n.c, x, drumY(n.c))); });
+    });
+    for (b = 0; b < 4; b++) {
+      var g = ps.filter(function (q) { return Math.floor(q / 4) === b; });
+      if (!g.length) continue;
+      var x0 = bx + (g[0] + 0.5) * unit;
+      if (g.length >= 2) {
+        var x1 = bx + (g[g.length - 1] + 0.5) * unit;
+        out.push('<rect x="' + x0 + '" y="' + (BEAM_Y - 1.8) + '" width="' + (x1 - x0) +
+          '" height="3.6" fill="#3a444c"/>');
+      } else {
+        out.push('<rect x="' + x0 + '" y="' + (BEAM_Y - 1.8) + '" width="7.5" height="3.6" fill="#3a444c"/>');
+      }
+    }
+    return out.join('');
+  }
+
+  function buildTab() {
+    var sc = el('dqScroll');
+    if (!sc || !st.bars.length) return;
+    var W = sc.clientWidth || 900;
+    if (W < 200) W = 900;
+    st.lastW = W;
+    st.bpr = W >= 700 ? 2 : 1;
+    var avail = W - st.gutter - 10;
+    st.barW = avail / st.bpr;
+    st.rows = Math.ceil(st.bars.length / st.bpr);
+    var html = [], r, k;
+    var lastBpm = 0;
+    for (r = 0; r < st.rows; r++) {
+      var i0 = r * st.bpr;
+      var s = ['<svg width="' + W + '" height="' + ROW_H + '" viewBox="0 0 ' + W + ' ' + ROW_H + '">'];
+      for (k = 0; k < 5; k++) {
+        s.push('<line x1="' + st.gutter + '" y1="' + (STAFF_TOP + k * GAP) + '" x2="' +
+          (st.gutter + st.barW * Math.min(st.bpr, st.bars.length - i0)) + '" y2="' +
+          (STAFF_TOP + k * GAP) + '" stroke="#b9c2c9" stroke-width="1"/>');
+      }
+      for (k = 0; k < st.bpr; k++) {
+        var bi = i0 + k;
+        if (bi >= st.bars.length) break;
+        var bx = st.gutter + k * st.barW;
+        s.push('<line x1="' + bx + '" y1="' + (STAFF_TOP - 5) + '" x2="' + bx + '" y2="' +
+          (LINE_BOTTOM + 5) + '" stroke="#a7b2ba" stroke-width="1.2"/>');
+        s.push('<text x="' + (bx + 2) + '" y="10" font-size="10.5" fill="#9aa4ac" font-family="Consolas,\'Cascadia Mono\',monospace">' +
+          (bi + 1) + '</text>');
+        var bpm = Math.round(st.bars[bi].bpm || 0);
+        if (bpm && Math.abs(bpm - lastBpm) >= 4) {
+          lastBpm = bpm;
+          s.push('<text x="' + (bx + 20) + '" y="10" font-size="10.5" fill="#7c8790" font-family="Consolas,monospace">♩=' + bpm + '</text>');
+        }
+        s.push(notesSVG(st.bars[bi], bx, st.barW));
+      }
+      var endX = st.gutter + st.barW * Math.min(st.bpr, st.bars.length - i0);
+      s.push('<line x1="' + endX + '" y1="' + (STAFF_TOP - 5) + '" x2="' + endX + '" y2="' +
+        (LINE_BOTTOM + 5) + '" stroke="#a7b2ba" stroke-width="1.2"/>');
+      s.push('</svg>');
+      html.push('<div class="tabrow" data-row="' + r + '">' + s.join('') + '</div>');
+    }
+    sc.innerHTML = html.join('') +
+      '<div class="phcol" id="dqPhCol" hidden></div><div class="phline" id="dqPhLine" hidden></div>';
+    st.lastRow = -1;
+    placeHead(true);
+  }
+
+  /* 播放头：绿色方框 + 细竖线 */
+  function placeHead(force) {
+    if (st.view !== 'tab') return;
+    var ph = el('dqPhCol'), ln = el('dqPhLine');
+    if (!ph || !ln || !st.bars.length) return;
+    var hit = barAt(time());
+    if (!hit) { ph.hidden = true; ln.hidden = true; st.hit = null; return; }
+    var row = Math.floor(hit.i / st.bpr), col = hit.i % st.bpr;
+    var boss = el('dqScroll');
+    var x0 = st.gutter + col * st.barW;
+    var cw = st.barW / 16;
+    var ci = Math.min(15, Math.floor(hit.frac * 16));
+    st.hit = hit;
+    ph.hidden = false; ln.hidden = false;
+    ph.style.left = (x0 + ci * cw) + 'px';
+    ph.style.width = cw + 'px';
+    ph.style.top = (row * ROW_H + BEAM_Y - 9) + 'px';
+    ph.style.height = (LINE_BOTTOM + 13 - (BEAM_Y - 9)) + 'px';
+    var xa = x0 + hit.frac * st.barW;
+    ln.style.left = (xa - 0.75) + 'px';
+    ln.style.top = (row * ROW_H + 4) + 'px';
+    ln.style.height = (LINE_BOTTOM + 8) + 'px';
+    if (force || row !== st.lastRow) {
+      st.lastRow = row;
+      var prev = boss.querySelector('.tabrow.cur');
+      if (prev) prev.classList.remove('cur');
+      var curRow = boss.querySelector('.tabrow[data-row="' + row + '"]');
+      if (curRow) curRow.classList.add('cur');
+      var top = row * ROW_H - boss.clientHeight / 2 + ROW_H / 2;
+      var max = boss.scrollHeight - boss.clientHeight;
+      top = Math.max(0, Math.min(max > 0 ? max : 0, top));
+      if (boss.scrollTop !== top) {
+        try { boss.scrollTo({ top: top, behavior: 'smooth' }); }
+        catch (e) { boss.scrollTop = top; }
+      }
+    }
+    /* 小节信息 */
+    var b = st.bars[hit.i];
+    el('dqBarNo').textContent = hit.i + 1;
+    el('dqBarTime').textContent = ' · ' + mmss(b.start) + '–' + mmss(b.end || b.start + 2);
+    /* 自动翻 PDF 页（打印版模式下） */
+    if (st.view === 'pdf' && st.layout) {
+      var g = barGeo(hit.i);
+      if (g && g.page !== st.page) { st.page = g.page; renderPdf(); }
+    }
+  }
+
+  /* ---------- 打印版 PDF ---------- */
   function barGeo(idx) {
+    if (!st.layout) return null;
     var n = 0;
     for (var p = 0; p < st.layout.pages.length; p++) {
       var pg = st.layout.pages[p];
@@ -2521,106 +2695,61 @@
     }
     return null;
   }
-
-  /* ---------- 渲染 ---------- */
-  function render() {
-    if (!st.layout || !st.bars.length) return;
-    st.pageCount = st.layout.pages.length || 1;
-    if (st.page > st.pageCount) st.page = st.pageCount;
-    if (st.page < 1) st.page = 1;
-    var pg = st.layout.pages[st.page - 1];
+  function renderPdf() {
+    var pg = st.layout && st.layout.pages[st.page - 1];
+    if (!pg) return;
     var img = el('dqPageImg'), ov = el('dqOverlay');
-    var src = '/api/pdf/page?song=' + encodeURIComponent(st.song) +
-              '&page=' + st.page + '&dpi=' + DPI[st.zoom];
+    var src = '/api/pdf/page?song=' + encodeURIComponent(st.song) + '&page=' + st.page + '&dpi=' + DPI[st.zoom];
     if (img.getAttribute('src') !== src) img.setAttribute('src', src);
-    if (pg) ov.setAttribute('viewBox', '0 0 ' + pg.w + ' ' + pg.h);
-    el('dqPageLabel').textContent = st.page + ' / ' + st.pageCount;
+    ov.setAttribute('viewBox', '0 0 ' + pg.w + ' ' + pg.h);
+    el('dqPageLabel').textContent = st.page + ' / ' + st.layout.pages.length;
     el('dqPrevPage').disabled = st.page <= 1;
-    el('dqNextPage').disabled = st.page >= st.pageCount;
-    var zoomed = st.zoom === 'big';
-    el('dqPaper').classList.toggle('zoomed', zoomed);
+    el('dqNextPage').disabled = st.page >= st.layout.pages.length;
+    el('dqPaper').classList.toggle('zoomed', st.zoom === 'big');
     el('dqPaper').classList.toggle('pagefit', st.zoom === 'page');
-    img.style.width = st.zoom === 'page' ? 'auto' : (zoomed ? '190%' : '100%');
+    img.style.width = st.zoom === 'page' ? 'auto' : (st.zoom === 'big' ? '190%' : '100%');
     img.style.height = st.zoom === 'page' ? '100%' : '';
-    el('dqBarTotal').textContent = st.bars.length;
-    el('dqStat').textContent = '共 ' + st.bars.length + ' 小节 · 全长 ' + mmss(totalDur());
-    paint();
   }
-
-  function paint() {
-    var a = curAudio();
-    var t = a ? (a.currentTime || 0) : 0;
-    var dur = totalDur();
-    /* 播放条 */
-    var f = dur ? Math.min(1, t / dur) : 0;
-    el('dqFill').style.width = (f * 100) + '%';
-    el('dqHead').style.left = (f * 100) + '%';
-    el('dqCur').textContent = mmss(t);
-    el('dqDur').textContent = mmss(dur);
-
-    /* 光标 */
+  function paintPdf() {
     var ov = el('dqOverlay');
     if (!ov || !st.layout) return;
-    var hit = barAt(t);
-    if (!hit) {
-      ov.innerHTML = '';
-      el('dqBarNo').textContent = '–';
-      el('dqBarTime').textContent = '';
-      st.cur = -2;
-      return;
-    }
+    var hit = barAt(time());
+    if (!hit) { ov.innerHTML = ''; return; }
     var g = barGeo(hit.i);
-    if (!g) return;
-    if (g.page !== st.page) { st.page = g.page; render(); scrollToBar(hit.i); return; }
-
-    var b = st.bars[hit.i];
-    el('dqBarNo').textContent = hit.i + 1;
-    el('dqBarTime').textContent = ' · ' + mmss(b.start) + '–' + mmss(b.end || b.start + 2);
-
+    if (!g) { ov.innerHTML = ''; return; }
     var pad = (g.bottom - g.top) * 0.16;
     var h = g.bottom - g.top + pad * 2, y = g.top - pad;
     var x = g.x0 + (g.x1 - g.x0) * hit.frac;
-    var xr = x.toFixed(1);
     ov.innerHTML =
-      '<rect x="' + g.x0 + '" y="' + y + '" width="' + (g.x1 - g.x0) + '" height="' + h +
-      '" fill="rgba(23,112,138,0.07)"/>' +
-      '<rect x="' + xr + '" y="' + y + '" width="2.4" height="' + h + '" fill="#17a2a2" opacity="0.92"/>' +
-      '<polygon points="' + xr + ',' + y + ' ' + (x - 3.6).toFixed(1) + ',' + (y - 6.5) + ' ' +
-      (x + 3.6).toFixed(1) + ',' + (y - 6.5) + '" fill="#17a2a2"/>';
-    st.cur = hit.i;
+      '<rect x="' + g.x0 + '" y="' + y + '" width="' + (g.x1 - g.x0) + '" height="' + h + '" fill="rgba(34,197,94,0.10)"/>' +
+      '<rect x="' + x.toFixed(1) + '" y="' + y + '" width="2.6" height="' + h + '" fill="#22c55e"/>' +
+      '<polygon points="' + x.toFixed(1) + ',' + y + ' ' + (x - 4).toFixed(1) + ',' + (y - 7) + ' ' +
+      (x + 4).toFixed(1) + ',' + (y - 7) + '" fill="#22c55e"/>';
   }
 
-  /* 换页 / 跳小节后，把当前那行拉到视野里（顶栏 + 播放条下面） */
-  function scrollToBar(idx) {
-    var g = barGeo(idx), img = el('dqPageImg'), pg = st.layout.pages[st.page - 1];
-    if (!g || !img || !pg) return;
-    var r = img.getBoundingClientRect();
-    var k = r.width / pg.w;                 /* viewBox -> CSS px */
-    if (!k) return;
-    var baseY = r.top + window.scrollY;
-    var top = baseY + (g.top - 24) * k;
-    var bottom = baseY + (g.bottom + 24) * k;
-    var vTop = window.scrollY + 130;        /* 顶栏 56 + 播放条 ~62 */
-    var vBottom = window.scrollY + window.innerHeight - 30;
-    if (top < vTop || bottom > vBottom) {
-      try { window.scrollTo({ top: Math.max(0, top - 150), behavior: 'smooth' }); }
-      catch (e) { window.scrollTo(0, Math.max(0, top - 150)); }
-    }
+  /* ---------- 统一刷新 ---------- */
+  var raf = 0;
+  function paint() {
+    var t = time(), dur = totalDur();
+    var f = dur ? Math.min(1, t / dur) : 0;
+    var fill = el('dqFill'), head = el('dqHeadPtr');
+    if (fill) fill.style.width = (f * 100) + '%';
+    if (head) head.style.left = (f * 100) + '%';
+    el('dqCur').textContent = mmss(t);
+    el('dqDur').textContent = mmss(dur);
+    if (st.view === 'tab') placeHead(false);
+    else paintPdf();
   }
-
-  /* ---------- 播放 ---------- */
-  var raf = 0;  function loop() { raf = requestAnimationFrame(loop); paint(); }
+  function loop() { raf = requestAnimationFrame(loop); paint(); }
   function startLoop() { if (!raf) loop(); }
   function stopLoop() { if (raf) { cancelAnimationFrame(raf); raf = 0; } }
 
   function syncPlay() {
-    var a = curAudio();
-    var on = !!(a && !a.paused);
+    var a = curAudio(), on = !!(a && !a.paused);
     st.playing = on;
     el('dqPlay').textContent = on ? '❚❚' : '▶';
     if (on) startLoop(); else { stopLoop(); paint(); }
   }
-
   function bindAudio(a) {
     if (!a || a.dataset.dq) return;
     a.dataset.dq = '1';
@@ -2630,40 +2759,38 @@
     a.addEventListener('timeupdate', function () { if (!st.playing) paint(); });
     a.addEventListener('loadedmetadata', paint);
     a.addEventListener('durationchange', paint);
+    a.addEventListener('error', function () {
+      if (a === curAudio() && el('dqWarn')) {
+        el('dqWarn').textContent = '⚠ 音频没能加载，播放头不会动（谱面仍可点选定位）。可在设置里检查音频源。';
+        el('dqWarn').hidden = false;
+      }
+    });
   }
-
   function togglePlay() {
     var a = curAudio();
-    if (!a) return;
+    if (!a || !a.getAttribute('src')) return;
     if (!a.paused) { a.pause(); return; }
-    if (!a.getAttribute('src')) { return; }
     var p = a.play();
     if (p && p.catch) p.catch(function () {});
   }
-
   function seek(t) {
     var a = curAudio();
     if (!a) return;
     try { a.currentTime = Math.max(0, t); } catch (e) {}
     paint();
   }
-
   function goBar(idx) {
     if (idx < 0 || idx >= st.bars.length) return;
-    var on = st.playing;
+    var playing = st.playing;
     seek(st.bars[idx].start + 0.02);
-    if (on) { var a = curAudio(); if (a && a.paused) { var p = a.play(); if (p && p.catch) p.catch(function () {}); } }
+    if (playing) { var a = curAudio(); if (a && a.paused) { var p = a.play(); if (p && p.catch) p.catch(function () {}); } }
   }
-
   function switchSrc(which) {
     if (which === st.src) return;
-    var from = curAudio();
-    var t = from ? (from.currentTime || 0) : 0;
+    var from = curAudio(), t = from ? (from.currentTime || 0) : 0;
     var wasPlaying = !!(from && !from.paused);
     if (from) from.pause();
-    if (which === 'drum' && !el('resAudio').getAttribute('src')) {
-      return; /* 这次没生成鼓声 */
-    }
+    if (which === 'drum' && !el('resAudio').getAttribute('src')) return;
     st.src = which;
     Array.prototype.forEach.call(document.querySelectorAll('#dqSrc button'), function (b) {
       b.classList.toggle('on', b.dataset.src === which);
@@ -2680,67 +2807,110 @@
     paint();
   }
 
-  /* ---------- 交互 ---------- */
-  function onStageClick(ev) {
-    var img = el('dqPageImg'), pg = st.layout.pages[st.page - 1];
-    if (!img || !pg) return;
-    var r = img.getBoundingClientRect();
-    var px = (ev.clientX - r.left) / r.width * pg.w;
-    var py = (ev.clientY - r.top) / r.height * pg.h;
-    var n = 0;
-    for (var si = 0; si < pg.systems.length; si++) {
-      var sy = pg.systems[si];
-      if (py >= sy.top - 14 && py <= sy.bottom + 14) {
-        for (var b = 0; b < sy.bounds.length - 1; b++) {
-          if (px >= sy.bounds[b] && px <= sy.bounds[b + 1]) {
-            var idx = n + b;
-            if (st.bars[idx]) goBar(idx);
-            return;
-          }
-        }
-        return;
-      }
-      n += sy.bounds.length - 1;
-    }
+  /* ---------- 视图切换 ---------- */
+  function setView(v) {
+    st.view = v;
+    var isTab = v === 'tab';
+    el('dqTab').hidden = !isTab;
+    el('dqPaper').hidden = isTab;
+    el('dqPdfTools').hidden = isTab;
+    el('dqSub').textContent = isTab
+      ? '动态谱 · 绿色播放头跟着音乐走 · 点任意位置跳转'
+      : '打印版 PDF · 与导出文件完全一致 · 点小节跳转';
+    Array.prototype.forEach.call(document.querySelectorAll('#dqViewMode button'), function (b) {
+      b.classList.toggle('on', b.dataset.view === v);
+    });
+    if (isTab) { if (!st.rows) buildTab(); else placeHead(true); }
+    else { renderPdf(); paintPdf(); }
   }
 
+  /* ---------- 交互 ---------- */
   function bindChrome() {
+    var sc = el('dqScroll');
+    if (sc && !sc.dataset.b) {
+      sc.dataset.b = '1';
+      sc.addEventListener('click', function (ev) {
+        var r = sc.getBoundingClientRect();
+        var y = ev.clientY - r.top + sc.scrollTop;
+        var row = Math.floor(y / ROW_H);
+        var x = ev.clientX - r.left;
+        var col = Math.floor((x - st.gutter) / st.barW);
+        if (col < 0 || col >= st.bpr) return;
+        var bi = row * st.bpr + col;
+        if (bi >= st.bars.length) return;
+        var raw = (x - (st.gutter + col * st.barW)) / st.barW;
+        var q = Math.min(15, Math.max(0, Math.floor(raw * 16)));
+        var bar = st.bars[bi];
+        seek(bar.start + ((q + 0.5) / 16) * (bar.end - bar.start));
+      });
+    }
     var ov = el('dqOverlay');
-    if (ov && !ov.dataset.b) { ov.dataset.b = '1'; ov.addEventListener('click', onStageClick); }
-
+    if (ov && !ov.dataset.b) {
+      ov.dataset.b = '1';
+      ov.addEventListener('click', function (ev) {
+        var img = el('dqPageImg'), pg = st.layout && st.layout.pages[st.page - 1];
+        if (!img || !pg) return;
+        var r = img.getBoundingClientRect();
+        var px = (ev.clientX - r.left) / r.width * pg.w;
+        var py = (ev.clientY - r.top) / r.height * pg.h;
+        var n = 0;
+        for (var si = 0; si < pg.systems.length; si++) {
+          var sy = pg.systems[si];
+          if (py >= sy.top - 14 && py <= sy.bottom + 14) {
+            for (var b = 0; b < sy.bounds.length - 1; b++) {
+              if (px >= sy.bounds[b] && px <= sy.bounds[b + 1]) {
+                var idx = n + b;
+                if (st.bars[idx]) goBar(idx);
+                return;
+              }
+            }
+            return;
+          }
+          n += sy.bounds.length - 1;
+        }
+      });
+    }
     var play = el('dqPlay');
     if (play && !play.dataset.b) { play.dataset.b = '1'; play.onclick = togglePlay; }
 
-    el('dqPrevPage').onclick = function () { if (st.page > 1) { st.page--; render(); } };
-    el('dqNextPage').onclick = function () { if (st.page < st.pageCount) { st.page++; render(); } };
-    el('dqZoom').onchange = function () { st.zoom = this.value; render(); };
-    el('dqPrevBar').onclick = function () { goBar(Math.max(0, (barAt((curAudio() || {}).currentTime || 0) || { i: 0 }).i - 1)); };
+    Array.prototype.forEach.call(document.querySelectorAll('#dqViewMode button'), function (b) {
+      b.onclick = function () { setView(b.dataset.view); };
+    });
+    el('dqPrevPage').onclick = function () { if (st.page > 1) { st.page--; renderPdf(); paintPdf(); } };
+    el('dqNextPage').onclick = function () {
+      if (st.layout && st.page < st.layout.pages.length) { st.page++; renderPdf(); paintPdf(); }
+    };
+    el('dqZoom').onchange = function () { st.zoom = this.value; renderPdf(); paintPdf(); };
+    el('dqPrevBar').onclick = function () {
+      var h = barAt(time()); goBar(h ? h.i - 1 : 0);
+    };
     el('dqNextBar').onclick = function () {
-      var h = barAt((curAudio() || {}).currentTime || 0);
-      goBar(h ? h.i + 1 : 0);
+      var h = barAt(time()); goBar(h ? h.i + 1 : 0);
     };
     Array.prototype.forEach.call(document.querySelectorAll('#dqSrc button'), function (b) {
       b.onclick = function () { switchSrc(b.dataset.src); };
     });
 
-    /* 拖动 / 点击进度条 */
-    var sc = el('dqScrub'), dragging = false;
-    function fromEv(ev) {
-      var r = sc.getBoundingClientRect();
-      var f = Math.min(1, Math.max(0, (ev.clientX - r.left) / Math.max(1, r.width)));
-      seek(f * totalDur());
+    var scb = el('dqScrub'), dragging = false;
+    if (scb && !scb.dataset.b) {
+      scb.dataset.b = '1';
+      var fromEv = function (ev) {
+        var r = scb.getBoundingClientRect();
+        var f = Math.min(1, Math.max(0, (ev.clientX - r.left) / Math.max(1, r.width)));
+        seek(f * totalDur());
+      };
+      scb.addEventListener('pointerdown', function (ev) {
+        dragging = true;
+        try { scb.setPointerCapture(ev.pointerId); } catch (e) {}
+        fromEv(ev);
+      });
+      scb.addEventListener('pointermove', function (ev) { if (dragging) fromEv(ev); });
+      scb.addEventListener('pointerup', function (ev) {
+        dragging = false;
+        try { scb.releasePointerCapture(ev.pointerId); } catch (e) {}
+      });
+      scb.addEventListener('pointercancel', function () { dragging = false; });
     }
-    sc.addEventListener('pointerdown', function (ev) {
-      dragging = true;
-      try { sc.setPointerCapture(ev.pointerId); } catch (e) {}
-      fromEv(ev);
-    });
-    sc.addEventListener('pointermove', function (ev) { if (dragging) fromEv(ev); });
-    sc.addEventListener('pointerup', function (ev) {
-      dragging = false;
-      try { sc.releasePointerCapture(ev.pointerId); } catch (e) {}
-    });
-    sc.addEventListener('pointercancel', function () { dragging = false; });
 
     if (!document.body.dataset.dqKeys) {
       document.body.dataset.dqKeys = '1';
@@ -2749,12 +2919,27 @@
         if (/^(INPUT|SELECT|TEXTAREA)$/.test(tag)) return;
         if (el('dqScore').hidden) return;
         if (ev.code === 'Space') { ev.preventDefault(); togglePlay(); }
-        else if (ev.key === 'ArrowLeft') { ev.preventDefault(); if (st.page > 1) { st.page--; render(); } }
-        else if (ev.key === 'ArrowRight') { ev.preventDefault(); if (st.page < st.pageCount) { st.page++; render(); } }
-        else if (ev.key === ',') { var h = barAt((curAudio() || {}).currentTime || 0); goBar(h ? h.i - 1 : 0); }
-        else if (ev.key === '.') { var h2 = barAt((curAudio() || {}).currentTime || 0); goBar(h2 ? h2.i + 1 : 0); }
+        else if (ev.key === 'ArrowLeft') {
+          ev.preventDefault();
+          if (st.view === 'pdf') { if (st.page > 1) { st.page--; renderPdf(); paintPdf(); } }
+          else { var h = barAt(time()); goBar(h ? h.i - 1 : 0); }
+        } else if (ev.key === 'ArrowRight') {
+          ev.preventDefault();
+          if (st.view === 'pdf') {
+            if (st.layout && st.page < st.layout.pages.length) { st.page++; renderPdf(); paintPdf(); }
+          } else { var h2 = barAt(time()); goBar(h2 ? h2.i + 1 : 0); }
+        }
       });
     }
+
+    var rt = 0;
+    window.addEventListener('resize', function () {
+      clearTimeout(rt);
+      rt = setTimeout(function () {
+        if (st.view === 'tab') buildTab();
+        else if (st.layout) { renderPdf(); paintPdf(); }
+      }, 220);
+    });
   }
 
   /* ---------- 数据 ---------- */
@@ -2766,7 +2951,6 @@
       var k = s.song + '|' + (s.finished || '');
       if (k === st.key) return;
       st.key = k;
-      /* 换歌：先撤掉「已就绪」，避免在新数据到之前短暂露出上一首的谱面 */
       var prev = el('dqScore');
       if (prev) prev.removeAttribute('data-ready');
       Promise.all([
@@ -2774,12 +2958,11 @@
         fetch('/api/scorelayout?song=' + encodeURIComponent(s.song)).then(function (r) { return r.ok ? r.json() : null; })
       ]).then(function (res) {
         var sm = res[0], lo = res[1];
-        if (!sm || !sm.ok || !lo || !lo.ok || !lo.pages || !lo.pages.length) { st.key = ''; return; }
+        if (!sm || !sm.ok || !(sm.bars || []).length) { st.key = ''; return; }
         st.song = s.song;
         st.bars = sm.bars || [];
-        st.layout = lo;
-        st.page = 1;
-        st.cur = -2;
+        st.layout = (lo && lo.ok) ? lo : null;
+        st.page = 1; st.rows = 0; st.lastRow = -1;
         var card = el('dqScore');
         var mix = el('dqAudio');
         var want = '/api/source?song=' + encodeURIComponent(s.song);
@@ -2787,16 +2970,28 @@
         bindAudio(mix);
         bindAudio(el('resAudio'));
         bindChrome();
+        el('dqBarTotal').textContent = st.bars.length;
+        el('dqStat').textContent = '共 ' + st.bars.length + ' 小节 · 全长 ' + mmss(totalDur());
         card.dataset.ready = '1';
         var done = el('viewDone');
         card.hidden = !(done && !done.hidden);
-        render();
+        buildTab();
+        setView(st.view);
+        paint();
       }).catch(function () { st.key = ''; });
     }).catch(function () {});
   }
 
+  /* 卡片从隐藏变可见时宽度会变：盯住宽度，变了就按真实宽度重排 */
+  setInterval(function () {
+    if (st.view !== 'tab' || !st.bars.length) return;
+    var sc = el('dqScroll');
+    if (!sc || !sc.clientWidth) return;
+    if (Math.abs(sc.clientWidth - (st.lastW || 0)) > 4) buildTab();
+  }, 400);
+
   setInterval(load, 2500);
-  setTimeout(load, 800);
+  setTimeout(load, 600);
 })();
 </script>
 </body>
