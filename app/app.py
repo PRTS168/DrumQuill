@@ -1245,7 +1245,7 @@ def pdf_page():
     try:
         page = max(1, int(request.args.get("page", 1)))
         dpi = int(request.args.get("dpi", 120))
-        dpi = max(24, min(220, dpi))
+        dpi = max(24, min(320, dpi))
     except Exception:
         page, dpi = 1, 120
     try:

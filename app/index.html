@@ -2501,9 +2501,9 @@
   var el = function (id) { return document.getElementById(id); };
   var st = {
     song: '', bars: [], layout: null, page: 1, zoom: 'fit', src: 'mix',
-    key: '', playing: false, explicit: false, cols: []
+    key: '', playing: false, explicit: false, cols: [], pageHold: 0, failAt: 0
   };
-  var DPI = { fit: 150, page: 200, hd: 200, big: 320 };
+  var DPI = { fit: 150, page: 200, hd: 220, big: 320 };
 
   /* ---------- 工具 ---------- */
   function curAudio() { return el(st.src === 'drum' ? 'resAudio' : 'dqAudio'); }
@@ -2520,12 +2520,19 @@
     return b ? (b.end ? b.end : b.start + 2) : 0;
   }
   function barAt(t) {
-    for (var i = 0; i < st.bars.length; i++) {
+    var n = st.bars.length;
+    if (!n) return null;
+    for (var i = 0; i < n; i++) {
       var b = st.bars[i], s = b.start, e = b.end ? b.end : (s + 2);
       if (t >= s && t < e) return { i: i, frac: Math.min(0.999, (t - s) / Math.max(0.15, e - s)) };
     }
-    if (st.bars.length && t < st.bars[0].start) return { i: 0, frac: 0 };
-    return null;
+    if (t < st.bars[0].start) return { i: 0, frac: 0 };
+    var last = st.bars[n - 1];
+    if (t >= (last.end ? last.end : last.start + 2) - 0.02) return { i: n - 1, frac: 0.999 };
+    for (var j = n - 1; j >= 0; j--) {
+      if (t >= st.bars[j].start) return { i: j, frac: 0.999 };
+    }
+    return { i: 0, frac: 0 };
   }
   function barGeo(idx) {
     if (!st.layout) return null;
@@ -2577,7 +2584,7 @@
           for (var q = 1; q < seg.length; q++) {
             if (seg[q] <= seg[q - 1]) seg[q] = seg[q - 1] + 0.5;      /* 强制单调 */
           }
-          st.cols[bar] = ps.length ? { ps: ps, xs: seg } : null;
+          st.cols[bar] = (ps.length && seg.length) ? { ps: ps, xs: seg } : null;
           if (!good) st.colsBad++;
           bar++;
         }
@@ -2589,10 +2596,11 @@
   function xAtP(bi, p) {
     var g = barGeo(bi), c = st.cols && st.cols[bi];
     if (!g) return null;
-    if (c && c.ps.length) {
+    if (c && c.ps.length && c.xs && c.xs.length) {
       var ps = c.ps, xs = c.xs, j;
       if (p <= ps[0]) {
-        var f0 = ps[0] > 0 ? p / ps[0] : 0;
+        if (ps[0] <= 0.0001) return xs[0];
+        var f0 = p / ps[0];
         return g.x0 + (xs[0] - g.x0) * Math.max(0, Math.min(1, f0));
       }
       for (j = 0; j < ps.length - 1; j++) {
@@ -2612,35 +2620,45 @@
   /* ---------- 打印版 PDF ---------- */
   function pageUrl(page) {
     return '/api/pdf/page?song=' + encodeURIComponent(st.song) +
-      '&page=' + page + '&dpi=' + DPI[st.zoom];
+      '&page=' + page + '&dpi=' + DPI[st.zoom] + '&v=' + encodeURIComponent(st.zoom);
   }
-  /* 先把图下到内存再换，翻页时不会闪一下、也不会把光标画到旧页上 */
-  function setPageImage(src) {
+  /* 先把图下到内存再换，翻页时不闪、也不会把光标画到旧页上。
+     用令牌而不是比对 src：同一 src 反复设置时也要能把 loaded 补回来。 */
+  function setPageImage(src, key) {
     var img = el('dqPageImg');
-    if (img.getAttribute('src') === src) return;
+    if (img.dataset.srcKey === key && img.dataset.loaded === '1') return;
+    img.dataset.srcKey = key;
     var pre = new Image();
     pre.onload = function () {
+      if (img.dataset.srcKey !== key) return;      /* 期间又换了页，丢掉这次结果 */
       img.setAttribute('src', src);
       img.dataset.loaded = '1';
       paintPdf();
     };
-    pre.onerror = function () { img.setAttribute('src', src); img.dataset.loaded = '1'; };
+    pre.onerror = function () {
+      if (img.dataset.srcKey !== key) return;
+      img.setAttribute('src', src);
+      img.dataset.loaded = '1';
+    };
     pre.src = src;
   }
+  var preloaded = {};
   function preloadNext() {
     if (!st.layout) return;
     var n = st.page + 1;
-    if (n <= st.layout.pages.length) {
-      var im = new Image();
-      im.src = pageUrl(n);
-    }
+    if (n > st.layout.pages.length) return;
+    var u = pageUrl(n);
+    if (preloaded[u]) return;
+    preloaded[u] = 1;
+    var im = new Image();
+    im.src = u;
   }
 
   function renderPdf() {
     var pg = st.layout && st.layout.pages[st.page - 1];
     if (!pg) return;
     var ov = el('dqOverlay');
-    setPageImage(pageUrl(st.page));
+    setPageImage(pageUrl(st.page), st.page + '|' + st.zoom);
     ov.setAttribute('viewBox', '0 0 ' + pg.w + ' ' + pg.h);
     el('dqPageLabel').textContent = st.page + ' / ' + st.layout.pages.length;
     el('dqPrevPage').disabled = st.page <= 1;
@@ -2648,13 +2666,22 @@
     el('dqPaper').classList.toggle('zoomed', st.zoom === 'big');
     el('dqPaper').classList.toggle('pagefit', st.zoom === 'page');
     var img2 = el('dqPageImg');
-    img2.style.width = st.zoom === 'page' ? 'auto' : (st.zoom === 'big' ? '190%' : '100%');
+    var big = st.zoom === 'big';
+    img2.style.width = st.zoom === 'page' ? 'auto' : (big ? '190%' : '100%');
     img2.style.height = st.zoom === 'page' ? '100%' : '';
+    ov.style.width = big ? '190%' : '100%';
     preloadNext();
   }
 
-  /* 顶栏 56 + 播放条约 62：这以下才是「能看见」的区域 */
-  var STICKY = 128;
+  /* 吸顶区实际高度（顶栏 + 播放条），窄屏播放条不吸顶所以只算顶栏 */
+  function stickyOffset() {
+    var h = document.querySelector('header.top');
+    var t = document.querySelector('.transport');
+    var hh = h ? h.getBoundingClientRect().height : 56;
+    var th = 0;
+    if (t && getComputedStyle(t).position === 'sticky') th = t.getBoundingClientRect().height;
+    return Math.round(hh + th);
+  }
   var lastFollow = 0;
   /* 跟随滚动：把当前系统行放在吸顶条下面的舒适区；力不够时不做无谓滚动 */
   function scrollToSystem(g, force) {
@@ -2665,7 +2692,7 @@
     var k = r.height / pg.h;
     var top = r.top + g.top * k;            /* 客户区坐标 */
     var bottom = r.top + g.bottom * k;
-    var safeTop = STICKY + 24;
+    var safeTop = stickyOffset() + 24;
     var safeBottom = window.innerHeight - 96;
     var now = (window.performance && performance.now) ? performance.now() : Date.now();
     if (!force && now - lastFollow < 260) return;
@@ -2681,6 +2708,7 @@
   /* 谱面列间距能差到 4 倍，若直接按列插值，光标会忽快忽慢地抽。
      这里给显示位置加一个「只能往前走 + 限制瞬时速度」的平滑。 */
   function smoothX(bi, target, g) {
+    if (!isFinite(target)) { disp.x = null; return null; }
     var now = (window.performance && performance.now) ? performance.now() : Date.now();
     var dt = disp.last ? Math.min(0.12, (now - disp.last) / 1000) : 0.016;
     disp.last = now;
@@ -2711,8 +2739,12 @@
     var g = barGeo(hit.i);
     if (!g) { ov.innerHTML = ''; return; }
     if (g.page !== st.page) {
-      st.page = g.page;
-      renderPdf();
+      /* 播放中自动翻页；但用户刚自己翻过页就让他多看一会儿，别抢 */
+      var held = st.pageHold && ((window.performance ? performance.now() : Date.now()) < st.pageHold);
+      if (!held) {
+        st.page = g.page;
+        renderPdf();
+      }
       return;                     /* 等新页的图就绪后 setPageImage 会再画一次 */
     }
     if (el('dqPageImg').dataset.loaded !== '1') return;
@@ -2731,8 +2763,9 @@
     var bx = xAtP(hit.i, bi * 4);
     var bx2 = xAtP(hit.i, bi * 4 + 4);
     var xTarget = xAtP(hit.i, hit.frac * 16);
-    if (bx == null || xTarget == null) return;
+    if (bx == null || xTarget == null || !isFinite(xTarget)) return;
     var x = smoothX(hit.i, xTarget, g);
+    if (x == null || !isFinite(x)) return;
     if (bx2 == null) bx2 = bx + (g.x1 - g.x0) / 4;
     var beat = Math.max(8, bx2 - bx);
     ov.innerHTML =
@@ -2794,6 +2827,8 @@
     var a = curAudio();
     if (!a) return;
     try { a.currentTime = Math.max(0, t); } catch (e) {}
+    disp.x = null;
+    disp.last = 0;
     paint();
   }
   /* 点小节：落到最近的音符列，而不是小节开头（更符合「我想听这里」的直觉） */
@@ -2838,10 +2873,10 @@
   }
   function switchSrc(which) {
     if (which === st.src) return;
+    if (which === 'drum' && !el('resAudio').getAttribute('src')) return;
     var from = curAudio(), t = from ? (from.currentTime || 0) : 0;
     var wasPlaying = !!(from && !from.paused);
     if (from) from.pause();
-    if (which === 'drum' && !el('resAudio').getAttribute('src')) return;
     st.src = which;
     Array.prototype.forEach.call(document.querySelectorAll('#dqSrc button'), function (b) {
       b.classList.toggle('on', b.dataset.src === which);
@@ -2859,6 +2894,10 @@
   }
 
   /* ---------- 交互 ---------- */
+  function holdPage() {
+    st.pageHold = ((window.performance && performance.now) ? performance.now() : Date.now()) + 4000;
+  }
+
   function bindChrome() {
     var ov = el('dqOverlay');
     if (ov && !ov.dataset.b) {
@@ -2897,10 +2936,10 @@
     if (back) back.onclick = function () { backToJob(); };
 
     el('dqPrevPage').onclick = function () {
-      if (st.page > 1) { st.page--; renderPdf(); paintPdf(); }
+      if (st.page > 1) { st.page--; holdPage(); renderPdf(); }
     };
     el('dqNextPage').onclick = function () {
-      if (st.layout && st.page < st.layout.pages.length) { st.page++; renderPdf(); paintPdf(); }
+      if (st.layout && st.page < st.layout.pages.length) { st.page++; holdPage(); renderPdf(); }
     };
     el('dqZoom').onchange = function () {
       st.zoom = this.value;
@@ -2943,21 +2982,24 @@
         if (ev.code === 'Space') { ev.preventDefault(); togglePlay(); }
         else if (ev.key === 'ArrowLeft') {
           ev.preventDefault();
-          if (st.page > 1) { st.page--; renderPdf(); paintPdf(); }
+          if (st.page > 1) { st.page--; holdPage(); renderPdf(); }
         } else if (ev.key === 'ArrowRight') {
           ev.preventDefault();
-          if (st.layout && st.page < st.layout.pages.length) { st.page++; renderPdf(); paintPdf(); }
+          if (st.layout && st.page < st.layout.pages.length) { st.page++; holdPage(); renderPdf(); }
         }
       });
     }
 
-    var rt = 0;
-    window.addEventListener('resize', function () {
-      clearTimeout(rt);
-      rt = setTimeout(function () {
-        if (st.layout) { renderPdf(); paintPdf(); }
-      }, 220);
-    });
+    if (!window.__dqResize) {
+      window.__dqResize = 1;
+      var rt = 0;
+      window.addEventListener('resize', function () {
+        clearTimeout(rt);
+        rt = setTimeout(function () {
+          if (st.layout) { renderPdf(); paintPdf(); }
+        }, 220);
+      });
+    }
   }
 
   /* ---------- 数据 ---------- */
@@ -2970,6 +3012,7 @@
 
   function applyScore(sm, lo, name) {
     if (!sm || !sm.ok || !(sm.bars || []).length) return false;
+    if (name === st.jobSong) window.__dqLastJobSong = name;
     st.song = name;
     st.bars = sm.bars || [];
     st.layout = (lo && lo.ok) ? lo : null;
@@ -2977,6 +3020,13 @@
     var mix = el('dqAudio');
     var want = '/api/source?song=' + encodeURIComponent(name);
     if (mix.getAttribute('src') !== want) mix.setAttribute('src', want);
+    /* 音源选回原曲；鼓声轨属于「本次任务」，看历史时清掉，免得播上一首的鼓声 */
+    st.src = 'mix';
+    Array.prototype.forEach.call(document.querySelectorAll('#dqSrc button'), function (b) {
+      b.classList.toggle('on', b.dataset.src === 'mix');
+    });
+    if (name !== (window.__dqLastJobSong || '')) el('resAudio').removeAttribute('src');
+    disp.x = null; disp.bar = -1; disp.last = 0;
     bindAudio(mix);
     bindAudio(el('resAudio'));
     bindChrome();
@@ -3013,15 +3063,20 @@
       if (!hasPdf) return;
       var k = s.song + '|' + (s.finished || '');
       if (k === st.key) return;
+      /* 失败了就别每 2.5 秒重跑一次 PDF 解析（每首 0.1~0.3 秒 CPU），退避 30 秒 */
+      var nowMs = (window.performance && performance.now) ? performance.now() : Date.now();
+      if (st.failAt && nowMs - st.failAt < 30000) return;
       st.key = k;
+      st.jobSong = s.song;
       var card = el('dqScore');
       if (card) card.removeAttribute('data-ready');
       fetchScore(s.song).then(function (res) {
-        if (!applyScore(res[0], res[1], s.song)) { st.key = ''; return; }
+        if (st.explicit) return;                 /* 用户已打开别的歌，别覆盖 */
+        if (!applyScore(res[0], res[1], s.song)) { st.key = ''; st.failAt = nowMs; return; }
         var done = el('viewDone');
         card.hidden = !(done && !done.hidden);
         setHist(false, '');
-      }).catch(function () { st.key = ''; });
+      }).catch(function () { st.key = ''; st.failAt = nowMs; });
     }).catch(function () {});
   }
 
