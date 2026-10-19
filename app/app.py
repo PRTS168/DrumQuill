@@ -1714,6 +1714,17 @@ def _pdf_layout(pdf_path):
                     hl.append((round(p1.y, 1), round(min(p1.x, p2.x), 1), round(max(p1.x, p2.x), 1)))
                 elif abs(p1.x - p2.x) < 0.6:
                     vl.append((round(p1.x, 1), round(min(p1.y, p2.y), 1), round(max(p1.y, p2.y), 1)))
+        heads = []
+        try:
+            for blk in page.get_text("rawdict")["blocks"]:
+                for line in blk.get("lines", []):
+                    for span in line["spans"]:
+                        for ch in span["chars"]:
+                            o = ord(ch["c"][0])
+                            if 0xE0A0 <= o <= 0xE0FF:      # SMuFL 音符头区间
+                                heads.append(ch)
+        except Exception:
+            heads = []
         ys = sorted({h[0] for h in hl})
         # 五线一组
         syss, i = [], 0
@@ -1737,8 +1748,11 @@ def _pdf_layout(pdf_path):
             bounds = sorted(set(round(b, 1) for b in bounds))
             if x1 > bounds[-1] + 1:
                 bounds.append(round(x1, 1))
+            # 音符头（SMuFL 私有区字形）的 x：一列（同一拍位）可能多个鼓，聚类后即该列的位置
+            nx = sorted({round(ch["origin"][0], 1) for ch in heads
+                         if abs(ch["origin"][1] - top) < (bot - top) + 12})
             systems.append({"top": top, "bottom": bot, "x0": round(x0, 1), "x1": round(x1, 1),
-                            "bounds": bounds})
+                            "bounds": bounds, "nx": nx})
         pages.append({"page": pno, "w": round(page.rect.width, 1), "h": round(page.rect.height, 1),
                       "systems": systems})
     return pages

@@ -2501,7 +2501,7 @@
   var el = function (id) { return document.getElementById(id); };
   var st = {
     song: '', bars: [], layout: null, page: 1, zoom: 'fit', src: 'mix',
-    key: '', playing: false, explicit: false
+    key: '', playing: false, explicit: false, cols: []
   };
   var DPI = { fit: 150, page: 200, hd: 200, big: 320 };
 
@@ -2542,6 +2542,55 @@
       }
     }
     return null;
+  }
+
+  /* ---------- 谱面坐标 ---------- */
+  /* MuseScore 按音符时值排版，同一小节里各拍宽度并不相等；
+     所以不能按时间线性铺满小节，必须用谱面上音符列的真实 x。 */
+  function buildCols() {
+    st.cols = [];
+    if (!st.layout) return;
+    var bar = 0;
+    for (var p = 0; p < st.layout.pages.length; p++) {
+      var pg = st.layout.pages[p];
+      for (var si = 0; si < pg.systems.length; si++) {
+        var sy = pg.systems[si], nx = sy.nx || [], i = 0;
+        for (var k = 0; k < sy.bounds.length - 1; k++) {
+          if (bar >= st.bars.length) break;
+          var seen = {}, notes = st.bars[bar].notes || [];
+          for (var n = 0; n < notes.length; n++) seen[Math.max(0, Math.min(15, notes[n].p | 0))] = 1;
+          var ps = Object.keys(seen).map(Number).sort(function (a, b) { return a - b; });
+          var seg = nx.slice(i, i + ps.length);
+          i += ps.length;
+          st.cols[bar] = (seg.length === ps.length && ps.length) ? { ps: ps, xs: seg } : null;
+          bar++;
+        }
+      }
+    }
+  }
+
+  /* 小节内第 p 个十六分位（0..16，可带小数）对应的谱面 x */
+  function xAtP(bi, p) {
+    var g = barGeo(bi), c = st.cols && st.cols[bi];
+    if (!g) return null;
+    if (c && c.ps.length) {
+      var ps = c.ps, xs = c.xs, j;
+      if (p <= ps[0]) {
+        var f0 = ps[0] > 0 ? p / ps[0] : 0;
+        return g.x0 + (xs[0] - g.x0) * Math.max(0, Math.min(1, f0));
+      }
+      for (j = 0; j < ps.length - 1; j++) {
+        if (p < ps[j + 1]) {
+          var u = (p - ps[j]) / Math.max(0.001, ps[j + 1] - ps[j]);
+          return xs[j] + (xs[j + 1] - xs[j]) * u;
+        }
+      }
+      if (p >= ps[ps.length - 1]) {
+        var f1 = (p - ps[ps.length - 1]) / Math.max(2, 16 - ps[ps.length - 1]);
+        return xs[xs.length - 1] + (g.x1 - xs[xs.length - 1]) * Math.max(0, Math.min(1, f1));
+      }
+    }
+    return g.x0 + (p / 16) * (g.x1 - g.x0);
   }
 
   /* ---------- 打印版 PDF ---------- */
@@ -2599,10 +2648,14 @@
     }
     var pad = (g.bottom - g.top) * 0.24;
     var h = g.bottom - g.top + pad * 2, y = g.top - pad;
-    var beat = (g.x1 - g.x0) / 4;                      /* 一小节按 4 拍切 */
+    /* 用谱上真实音符列定位（拍内按时间插值），这样光标不会随小节越走越偏 */
     var bi = Math.min(3, Math.floor(hit.frac * 4));
-    var bx = g.x0 + bi * beat;
-    var x = g.x0 + (g.x1 - g.x0) * hit.frac;
+    var bx = xAtP(hit.i, bi * 4);
+    var bx2 = xAtP(hit.i, bi * 4 + 4);
+    var x = xAtP(hit.i, hit.frac * 16);
+    if (bx == null || x == null) return;
+    if (bx2 == null) bx2 = bx + (g.x1 - g.x0) / 4;
+    var beat = Math.max(8, bx2 - bx);
     ov.innerHTML =
       '<rect x="24" y="' + y + '" width="' + (pg.w - 48) + '" height="' + h + '" fill="rgba(34,197,94,0.05)"/>' +
       '<rect x="' + g.x0 + '" y="' + y + '" width="' + (g.x1 - g.x0) + '" height="' + h + '" fill="rgba(34,197,94,0.10)"/>' +
@@ -2810,6 +2863,7 @@
       ' · ♩=' + (Math.round(st.bars[0].bpm || 0) || '—');
     el('dqWarn').hidden = true;
     el('dqScore').dataset.ready = '1';
+    buildCols();
     if (st.layout) { renderPdf(); paintPdf(); } else {
       el('dqOverlay').innerHTML = '';
     }
