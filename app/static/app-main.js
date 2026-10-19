@@ -392,7 +392,10 @@
     if(s.results && s.results.length){
       setMark('done');
       showView('done');
-      if(first) renderDone(s);
+      if(first){
+        renderDone(s);
+        loadHistory();          /* 这次的成品要立刻出现在「谱面库」里 */
+      }
       return;
     }
 
@@ -601,8 +604,11 @@
   }
 
   /* ================= 历史 + 产物管理 ================= */
+  window.dqLoadHistory = loadHistory;
+
   function loadHistory(){
-    fetch('/api/history').then(function(r){ return r.json(); }).then(function(items){
+    fetch('/api/history?t=' + Date.now(), { cache: 'no-store' })
+      .then(function(r){ return r.json(); }).then(function(items){
       var box = $('#history');
       if(!items || !items.length){ box.innerHTML = '<div class="empty">还没有产物。扒第一首试试。</div>'; return; }
       var html = '';

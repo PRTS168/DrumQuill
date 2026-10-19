@@ -27,6 +27,13 @@
     if (sub) sub.textContent = c[1];
     var m = document.querySelector('main');
     if (m) m.scrollTop = 0; else { try { window.scrollTo(0, 0); } catch (e) {} }
+    if (name === 'library') refreshLib();          /* 每次进库都重新读一次产物目录 */
+  }
+
+  /* 刷新谱面库（列表 + 侧栏计数） */
+  function refreshLib() {
+    if (window.dqLoadHistory) window.dqLoadHistory();
+    refreshBadge();
   }
 
   Array.prototype.forEach.call(document.querySelectorAll('.navitem[data-page]'), function (b) {
@@ -47,7 +54,8 @@
   /* 谱面库条目数挂在侧栏上 */
   function refreshBadge() {
     if (document.hidden) return;
-    fetch('/api/history').then(function (r) { return r.json(); }).then(function (list) {
+    fetch('/api/history?t=' + Date.now(), { cache: 'no-store' })
+      .then(function (r) { return r.json(); }).then(function (list) {
       var n = (list && list.length) || 0;
       var b = $('navLib');
       if (b) b.textContent = n;
@@ -67,6 +75,19 @@
       .observe(done, { attributes: true, attributeFilter: ['hidden'] });
   }
 
+  var rb = $('libRefresh');
+  if (rb) rb.addEventListener('click', function () { refreshLib(); });
+
+  document.addEventListener('keydown', function (ev) {
+    if (ev.key !== 'r' && ev.key !== 'R') return;
+    if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+    var t = ev.target;
+    if (t && t.closest && t.closest('input,textarea,select,[contenteditable]')) return;
+    var lib = $('pageLibrary');
+    if (lib && !lib.hidden) { ev.preventDefault(); refreshLib(); }
+  });
+
   window.dqShellShow = show;
   window.dqEnsureNewPage = ensureNewPage;
+  window.dqRefreshLib = refreshLib;
 })();
