@@ -195,14 +195,18 @@
     preloadNext();
   }
 
-  /* 吸顶区实际高度（顶栏 + 播放条），窄屏播放条不吸顶所以只算顶栏 */
-  function stickyOffset() {
+  /* 顶栏高度（播放器已改为底部悬浮层，不再参与顶部吸顶计算） */
+  function headerH() {
     var h = document.querySelector('header.top');
+    return h ? Math.round(h.getBoundingClientRect().height) : 52;
+  }
+  /* 悬浮播放器在底部占掉的高度（含与底边的间距） */
+  function playerH() {
     var t = document.querySelector('.transport');
-    var hh = h ? h.getBoundingClientRect().height : 56;
-    var th = 0;
-    if (t && getComputedStyle(t).position === 'sticky') th = t.getBoundingClientRect().height;
-    return Math.round(hh + th);
+    if (!t || t.hidden) return 0;
+    var r = t.getBoundingClientRect();      /* 注意：position:fixed 的 offsetParent 恒为 null */
+    if (!r.height) return 0;
+    return Math.round(r.height) + 30;
   }
 
   /* ---- 柔和跟随滚动 ----
@@ -263,15 +267,10 @@
 
   /* 视口锚点：让当前小节的行中心停在这里（吸顶条下面的可视区中部） */
   function followAnchor() {
-    /* 窗口坐标口径：stickyOffset() 已含顶栏+播放条，viewH() 是 main 的高度（不含顶栏），
-       所以可视区高度 = main 高度 - 播放条高度，不能再扣一次顶栏。 */
-    var barTop = stickyOffset();                       /* 顶栏 + 播放条 */
-    var transH = 0;
-    var tr = document.querySelector('.transport');
-    if (tr && getComputedStyle(tr).position === 'sticky') transH = tr.getBoundingClientRect().height;
-    var visTop = barTop + 12;
-    var visH = Math.max(140, viewH() - transH - 24);
-    return { y: visTop + visH * 0.44, visH: visH, visTop: visTop };
+    var visTop = headerH() + 14;
+    var visBottom = window.innerHeight - playerH();
+    var visH = Math.max(140, visBottom - visTop);
+    return { y: visTop + visH * 0.44, visH: visH, visTop: visTop, visBottom: visBottom };
   }
 
   /* 柔和跟随：目标每帧按「当前行中心 vs 锚点」重算，
@@ -287,6 +286,13 @@
     var an = followAnchor();
     var centerInView = dr.top + dr.height / 2 - scrollTopNow();
     var delta = centerInView - an.y;                   /* >0 表示行中心偏下，要往下滚 */
+    /* 行尾被底部悬浮播放器压住时，即使还在死区内也要拉回来。
+       注意口径：dr.top 是「内容坐标」（含 scrollTop），an.visBottom 是「窗口坐标」，
+       必须把行尾换算成窗口坐标再比，否则 delta 会随滚动越滚越大把页面顶到底。 */
+    var rowBottomInView = dr.top + dr.height - scrollTopNow();
+    if (rowBottomInView > an.visBottom) {
+      delta = Math.max(delta, rowBottomInView - an.visBottom + 10);
+    }
     var dead = Math.max(16, Math.min(58, an.visH * 0.10));
     var small = 10;
     if (force) {
@@ -582,6 +588,28 @@
     if (back) back.onclick = function () { backToJob(); };
     watchUserScroll();
 
+    /* 聚焦模式：隐藏侧栏，谱面独占；Esc 退出 */
+    var shellEl = document.querySelector('.shell');
+    function setFocus(on) {
+      if (!shellEl) return;
+      shellEl.classList.toggle('focus', !!on);
+      var b = el('dqFocus');
+      if (b) b.textContent = on ? '退出聚焦' : '聚焦';
+      sc.chasing = false;
+      setTimeout(function () { if (st.layout) { renderPdf(); paintPdf(); } }, 80);
+    }
+    var fb = el('dqFocus');
+    if (fb && !fb.dataset.b) {
+      fb.dataset.b = '1';
+      fb.onclick = function () { setFocus(!shellEl.classList.contains('focus')); };
+    }
+    if (!window.__dqEsc) {
+      window.__dqEsc = 1;
+      document.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Escape' && shellEl && shellEl.classList.contains('focus')) setFocus(false);
+      });
+    }
+
     el('dqPrevPage').onclick = function () {
       if (st.page > 1) { st.page--; holdPage(); renderPdf(); }
     };
@@ -779,7 +807,7 @@
   }
 
   window.dqOpen = openSong;
-  window.__dq = { st: st, sc: sc, disp: disp, sys: systemDocRect, sticky: stickyOffset,
+  window.__dq = { st: st, sc: sc, disp: disp, sys: systemDocRect, sticky: headerH,
     max: scrollMaxH, anchor: followAnchor, follow: scrollToSystem, scroll: scroller };
 
   setInterval(load, 2500);

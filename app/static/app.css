@@ -108,6 +108,8 @@ a:hover{text-decoration:underline}
 .side-ver{font-size:11px;color:var(--ink-3);padding:var(--s2) 10px 0;font-family:var(--mono)}
 
 .stage{display:flex;flex-direction:column;min-width:0;overflow:hidden;background:var(--bg)}
+.shell.focus{grid-template-columns:1fr}     /* 只剩 stage 一个子项，必须单列，否则落到 0 宽列 */
+.shell.focus .side{display:none}
 
 /* 顶部工具栏 */
 header.top{
@@ -122,11 +124,11 @@ header.top{
 
 /* 内容区 */
 main{flex:1;overflow-y:auto;min-height:0}
-.wrap{max-width:980px;margin:0 auto;padding:var(--s5) var(--s5) var(--s7)}
+.wrap{padding:var(--s5) var(--s5) calc(var(--s7) + 84px)}   /* 底部给悬浮播放器留位置 */
 .page{display:block}
 
 /* 页面标题 */
-.pagetitle{display:flex;align-items:flex-end;gap:10px;margin-bottom:var(--s4)}
+.pagetitle{display:flex;align-items:flex-end;gap:10px;margin:0 auto var(--s4);max-width:980px}
 .pagetitle h1{font-size:22px;font-weight:600;letter-spacing:-.2px}
 .pagetitle .sub{font-size:13px;color:var(--ink-3);padding-bottom:2px}
 
@@ -209,7 +211,8 @@ select.inp{width:auto;padding-right:6px;cursor:pointer;font-family:var(--font)}
 .banner .sp{flex:1}
 
 /* ============================== 面板 / 表单 ============================== */
-.card{background:var(--bg);margin-bottom:var(--s5)}
+.card{background:var(--bg);max-width:980px;margin:0 auto var(--s5)}
+.scorecard{max-width:none}                     /* 谱面铺满整幅 */
 .cardhead{display:flex;align-items:flex-start;justify-content:space-between;gap:var(--s4);margin-bottom:var(--s4)}
 .cardhead .right{font-family:var(--mono);font-size:11.5px;color:var(--ink-3);text-align:right;white-space:nowrap}
 h1{font-size:22px;font-weight:600;letter-spacing:-.2px}
@@ -333,8 +336,14 @@ h1{font-size:22px;font-weight:600;letter-spacing:-.2px}
 .scorecard[data-explicit="1"] .logwrap{display:none}
 
 .transport{
-  position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:var(--s3);
-  padding:10px 0;background:var(--bg);border-bottom:1px solid var(--sep)
+  position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:45;
+  display:flex;align-items:center;gap:var(--s3);
+  width:min(720px,calc(100vw - 48px));
+  padding:10px 14px;border-radius:var(--r-l);
+  background:rgba(255,255,255,.92);
+  -webkit-backdrop-filter:saturate(180%) blur(18px);
+  backdrop-filter:saturate(180%) blur(18px);
+  box-shadow:var(--sh-float);border:1px solid var(--sep)
 }
 .tplay{
   width:34px;height:34px;border-radius:50%;border:0;background:var(--accent);color:#fff;
@@ -351,7 +360,7 @@ h1{font-size:22px;font-weight:600;letter-spacing:-.2px}
 .srcseg{height:var(--h-s)}
 .srcseg button{font-size:11.5px;padding:0 10px}
 
-.paper{background:var(--bg-sunken);padding:var(--s4) 0;display:flex;justify-content:center}
+.paper{background:var(--bg-sunken);padding:var(--s4) var(--s4) var(--s4);display:flex;justify-content:center;border-radius:var(--r-m)}
 .paper .pg{position:relative;background:#fff;max-width:100%;box-shadow:0 0 0 .5px rgba(0,0,0,.10),0 6px 22px -8px rgba(0,0,0,.16)}
 .paper .pg img{display:block;width:100%;height:auto;border-radius:2px}
 #dqOverlay{position:absolute;left:0;top:0;width:100%;height:100%;cursor:pointer}
@@ -430,7 +439,7 @@ h1{font-size:22px;font-weight:600;letter-spacing:-.2px}
 .brand .bn-sub{font-size:11px;font-weight:400;color:var(--ink-3)}
 .brand .statusdot{margin-left:2px}
 
-footer{border-top:1px solid var(--sep);margin-top:var(--s6);padding-top:var(--s3);color:var(--ink-3);font-size:11px;line-height:1.9}
+footer{border-top:1px solid var(--sep);margin:var(--s6) auto 0;max-width:980px;padding-top:var(--s3);color:var(--ink-3);font-size:11px;line-height:1.9}
 footer .paths{font-family:var(--mono);word-break:break-all}
 footer .lnks{display:flex;gap:var(--s4);margin-top:4px}
 footer a{color:var(--ink-3)}
