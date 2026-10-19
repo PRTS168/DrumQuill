@@ -27,6 +27,13 @@
    "seconds": 64.4,
    "audio_sec": 40.0,
    "when": "2026-10-19 00:11"
+  },
+  {
+   "device": "GPU",
+   "mode": "full",
+   "seconds": 172.2,
+   "audio_sec": 254.3,
+   "when": "2026-10-19 23:13"
   }
  ]
 }

@@ -396,8 +396,8 @@
   /* 吸顶播放条 */
   .transport{
     position:sticky;top:56px;z-index:20;display:flex;align-items:center;gap:12px;
-    padding:10px 20px;background:rgba(255,255,255,.97);backdrop-filter:blur(6px);
-    border-bottom:1px solid var(--line-soft)
+    padding:10px 20px;background:#fff;border-bottom:1px solid var(--line);
+    box-shadow:0 6px 12px -8px rgba(16,24,30,.28)
   }
   .tplay{width:36px;height:36px;border-radius:50%;border:1px solid var(--accent);background:var(--accent);
     color:#fff;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;
@@ -414,7 +414,7 @@
   .srcseg button{font-size:12px;padding:0 11px}
 
   /* 纸张区：灰底 + 白纸阴影 */
-  .paper{background:#e9edef;padding:20px;display:flex;justify-content:center}
+  .paper{background:#e9edef;padding:24px 20px 20px;display:flex;justify-content:center}
   .paper .pg{position:relative;background:#fff;max-width:100%;
     box-shadow:0 1px 2px rgba(16,24,30,.13),0 10px 26px rgba(16,24,30,.10)}
   .paper .pg img{display:block;width:100%;height:auto}
@@ -2610,37 +2610,70 @@
   }
 
   /* ---------- 打印版 PDF ---------- */
+  function pageUrl(page) {
+    return '/api/pdf/page?song=' + encodeURIComponent(st.song) +
+      '&page=' + page + '&dpi=' + DPI[st.zoom];
+  }
+  /* 先把图下到内存再换，翻页时不会闪一下、也不会把光标画到旧页上 */
+  function setPageImage(src) {
+    var img = el('dqPageImg');
+    if (img.getAttribute('src') === src) return;
+    var pre = new Image();
+    pre.onload = function () {
+      img.setAttribute('src', src);
+      img.dataset.loaded = '1';
+      paintPdf();
+    };
+    pre.onerror = function () { img.setAttribute('src', src); img.dataset.loaded = '1'; };
+    pre.src = src;
+  }
+  function preloadNext() {
+    if (!st.layout) return;
+    var n = st.page + 1;
+    if (n <= st.layout.pages.length) {
+      var im = new Image();
+      im.src = pageUrl(n);
+    }
+  }
+
   function renderPdf() {
     var pg = st.layout && st.layout.pages[st.page - 1];
     if (!pg) return;
-    var img = el('dqPageImg'), ov = el('dqOverlay');
-    var src = '/api/pdf/page?song=' + encodeURIComponent(st.song) + '&page=' + st.page + '&dpi=' + DPI[st.zoom];
-    if (img.getAttribute('src') !== src) img.setAttribute('src', src);
+    var ov = el('dqOverlay');
+    setPageImage(pageUrl(st.page));
     ov.setAttribute('viewBox', '0 0 ' + pg.w + ' ' + pg.h);
     el('dqPageLabel').textContent = st.page + ' / ' + st.layout.pages.length;
     el('dqPrevPage').disabled = st.page <= 1;
     el('dqNextPage').disabled = st.page >= st.layout.pages.length;
     el('dqPaper').classList.toggle('zoomed', st.zoom === 'big');
     el('dqPaper').classList.toggle('pagefit', st.zoom === 'page');
-    img.style.width = st.zoom === 'page' ? 'auto' : (st.zoom === 'big' ? '190%' : '100%');
-    img.style.height = st.zoom === 'page' ? '100%' : '';
+    var img2 = el('dqPageImg');
+    img2.style.width = st.zoom === 'page' ? 'auto' : (st.zoom === 'big' ? '190%' : '100%');
+    img2.style.height = st.zoom === 'page' ? '100%' : '';
+    preloadNext();
   }
 
-  /* 当前系统行滚进视野（只在真的跑出视野时才滚，别跟用户抢） */
-  function scrollToSystem(g) {
+  /* 顶栏 56 + 播放条约 62：这以下才是「能看见」的区域 */
+  var STICKY = 128;
+  var lastFollow = 0;
+  /* 跟随滚动：把当前系统行放在吸顶条下面的舒适区；力不够时不做无谓滚动 */
+  function scrollToSystem(g, force) {
     var img = el('dqPageImg'), pg = st.layout && st.layout.pages[st.page - 1];
     if (!g || !img || !pg) return;
     var r = img.getBoundingClientRect();
-    var k = r.width / pg.w;
-    if (!k) return;
-    var baseY = r.top + window.scrollY;
-    var top = baseY + (g.top - 24) * k;
-    var bottom = baseY + (g.bottom + 24) * k;
-    var vTop = window.scrollY + 130;
-    var vBottom = window.scrollY + window.innerHeight - 40;
-    if (top < vTop || bottom > vBottom) {
-      try { window.scrollTo({ top: Math.max(0, top - 150), behavior: 'smooth' }); }
-      catch (e) { window.scrollTo(0, Math.max(0, top - 150)); }
+    if (!r.height) return;
+    var k = r.height / pg.h;
+    var top = r.top + g.top * k;            /* 客户区坐标 */
+    var bottom = r.top + g.bottom * k;
+    var safeTop = STICKY + 24;
+    var safeBottom = window.innerHeight - 96;
+    var now = (window.performance && performance.now) ? performance.now() : Date.now();
+    if (!force && now - lastFollow < 260) return;
+    lastFollow = now;
+    if (top < safeTop || bottom > safeBottom) {
+      var target = window.scrollY + top - safeTop - 8;
+      try { window.scrollTo({ top: Math.max(0, target), behavior: 'smooth' }); }
+      catch (e) { window.scrollTo(0, Math.max(0, target)); }
     }
   }
 
@@ -2680,8 +2713,11 @@
     if (g.page !== st.page) {
       st.page = g.page;
       renderPdf();
-      scrollToSystem(g);
+      return;                     /* 等新页的图就绪后 setPageImage 会再画一次 */
     }
+    if (el('dqPageImg').dataset.loaded !== '1') return;
+    /* 播放中自动跟到底部之外的系统行 */
+    if (st.playing) scrollToSystem(g, false);
     var pg = st.layout.pages[st.page - 1];
     var b = st.bars[hit.i];
     if (b) {
@@ -2760,10 +2796,44 @@
     try { a.currentTime = Math.max(0, t); } catch (e) {}
     paint();
   }
+  /* 点小节：落到最近的音符列，而不是小节开头（更符合「我想听这里」的直觉） */
+  function seekInBar(idx, px) {
+    var bar = st.bars[idx];
+    if (!bar) return;
+    var s = bar.start, e = bar.end ? bar.end : s + 2;
+    var t = s;
+    var c = st.cols && st.cols[idx];
+    var g0 = barGeo(idx);
+    if (c && c.xs && c.xs.length && px != null) {
+      if (px <= c.xs[0] || px >= c.xs[c.xs.length - 1]) {
+        /* 点在最后一列之后（小节尾部留白）或第一列之前：按小节内比例算 */
+        var fr = g0 ? Math.max(0, Math.min(1, (px - g0.x0) / Math.max(1e-3, g0.x1 - g0.x0))) : 0;
+        t = s + fr * (e - s);
+      } else {
+        var best = 0, bd = 1e9;
+        for (var i = 0; i < c.xs.length; i++) {
+          var d = Math.abs(c.xs[i] - px);
+          if (d < bd) { bd = d; best = i; }
+        }
+        t = s + (c.ps[best] / 16) * (e - s);
+      }
+    } else if (g0 && px != null) {
+      var fr2 = Math.max(0, Math.min(1, (px - g0.x0) / Math.max(1e-3, g0.x1 - g0.x0)));
+      t = s + fr2 * (e - s);
+    }
+    var playing = st.playing;
+    seek(Math.max(0, t));
+    var g = barGeo(idx);
+    if (g) scrollToSystem(g, true);
+    if (playing) { var a = curAudio(); if (a && a.paused) { var pr = a.play(); if (pr && pr.catch) pr.catch(function () {}); } }
+  }
+
   function goBar(idx) {
     if (idx < 0 || idx >= st.bars.length) return;
     var playing = st.playing;
     seek(st.bars[idx].start + 0.02);
+    var gg = barGeo(idx);
+    if (gg) scrollToSystem(gg, true);
     if (playing) { var a = curAudio(); if (a && a.paused) { var p = a.play(); if (p && p.catch) p.catch(function () {}); } }
   }
   function switchSrc(which) {
@@ -2799,14 +2869,19 @@
         var r = img.getBoundingClientRect();
         var px = (ev.clientX - r.left) / r.width * pg.w;
         var py = (ev.clientY - r.top) / r.height * pg.h;
+        /* 本页第一小节的全局序号：之前每页的小节数都要算上，否则第 2 页起点哪都跳错 */
         var n = 0;
+        for (var pp = 0; pp < st.page - 1; pp++) {
+          var prev = st.layout.pages[pp];
+          for (var sj = 0; sj < prev.systems.length; sj++) n += prev.systems[sj].bounds.length - 1;
+        }
         for (var si = 0; si < pg.systems.length; si++) {
           var sy = pg.systems[si];
           if (py >= sy.top - 14 && py <= sy.bottom + 14) {
             for (var b = 0; b < sy.bounds.length - 1; b++) {
               if (px >= sy.bounds[b] && px <= sy.bounds[b + 1]) {
                 var idx = n + b;
-                if (st.bars[idx]) goBar(idx);
+                if (st.bars[idx]) seekInBar(idx, px);
                 return;
               }
             }
@@ -2827,7 +2902,11 @@
     el('dqNextPage').onclick = function () {
       if (st.layout && st.page < st.layout.pages.length) { st.page++; renderPdf(); paintPdf(); }
     };
-    el('dqZoom').onchange = function () { st.zoom = this.value; renderPdf(); paintPdf(); };
+    el('dqZoom').onchange = function () {
+      st.zoom = this.value;
+      el('dqPageImg').removeAttribute('data-loaded');
+      renderPdf();
+    };
     el('dqPrevBar').onclick = function () { var h = barAt(time()); goBar(h ? h.i - 1 : 0); };
     el('dqNextBar').onclick = function () { var h = barAt(time()); goBar(h ? h.i + 1 : 0); };
     Array.prototype.forEach.call(document.querySelectorAll('#dqSrc button'), function (b) {
