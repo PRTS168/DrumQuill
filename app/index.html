@@ -2689,7 +2689,7 @@
   /* ---- 柔和跟随滚动 ----
      不用 CSS 的 smooth（它会「设定目标后一次性溜过去」，密集段落看起来一顿一顿），
      改成每帧朝目标挪一点点：缓动系数 + 每帧位移上限，接近时自然收住。 */
-  var sc = { goal: null, raf: 0, busy: false, userHold: 0 };
+  var sc = { goal: null, raf: 0, busy: false, userHold: 0, chasing: false };
   var disp = { x: null, bar: -1, last: 0 };   /* 平滑后的光标位置 */
   function maxScroll() {
     var d = document.documentElement;
@@ -2732,7 +2732,15 @@
     return { top: top, height: (g.bottom - g.top) * k, k: k };
   }
 
-  /* 柔和跟随：每帧都按「当前行」重算，行一进舒适区就停 —— 目标不残留，才不会来回滚 */
+  /* 视口锚点：让当前小节的行中心停在这里（吸顶条下面的可视区中部） */
+  function followAnchor() {
+    var visTop = stickyOffset() + 12;
+    var visH = Math.max(140, window.innerHeight - visTop - 28);
+    return { y: visTop + visH * 0.44, visH: visH, visTop: visTop };
+  }
+
+  /* 柔和跟随：目标每帧按「当前行中心 vs 锚点」重算，
+     偏差小就完全不动（死区），偏差大就一点点追过去，不会冲过头再拉回来。 */
   function scrollToSystem(g, force) {
     if (!g) return;
     var img = el('dqPageImg');
@@ -2741,16 +2749,26 @@
     if (!dr) return;
     var now = (window.performance && performance.now) ? performance.now() : Date.now();
     if (sc.userHold && now < sc.userHold) return;      /* 用户刚自己滚过，别抢 */
-    var safeTop = stickyOffset() + 22;
-    var safeBottom = window.innerHeight - 92;
-    var zone = Math.max(60, safeBottom - safeTop);
-    var y = dr.top - window.scrollY;
-    var fits = dr.height <= zone;
-    var inside = fits ? (y >= safeTop && y + dr.height <= safeBottom)
-                      : (Math.abs(y - safeTop) <= 3);
-    if (inside) { if (sc.raf) stopScrollAnim(); return; }   /* 到位即停，别继续滑到旧目标 */
-    var goal = dr.top - safeTop - 6;
-    easeScrollTo(goal, force ? 26 : 12);
+    var an = followAnchor();
+    var centerInView = dr.top + dr.height / 2 - window.scrollY;
+    var delta = centerInView - an.y;                   /* >0 表示行中心偏下，要往下滚 */
+    var dead = Math.max(16, Math.min(58, an.visH * 0.10));
+    var small = 10;
+    if (force) {
+      sc.chasing = false;
+    } else if (!sc.chasing) {
+      if (Math.abs(delta) < dead) {                    /* 还在舒适区：不动 */
+        if (sc.raf) stopScrollAnim();
+        return;
+      }
+      sc.chasing = true;                               /* 越过死区：开始追到正中 */
+    } else if (Math.abs(delta) < small) {
+      sc.chasing = false;
+      stopScrollAnim();
+      return;
+    }
+    var cap = Math.min(20, Math.max(9, Math.abs(delta) * 0.22));
+    easeScrollTo(window.scrollY + delta, force ? 26 : cap);
   }
 
   /* 用户主动滚动/滚轮/触屏时，立刻停掉我们的动画，并让出 1.2 秒 */
@@ -2759,6 +2777,7 @@
     window.__dqScrollWatch = 1;
     var yieldToUser = function () {
       if (sc.busy) return;                 /* 是我们自己在滚，不算用户 */
+      sc.chasing = false;
       stopScrollAnim();
       sc.userHold = ((window.performance && performance.now) ? performance.now() : Date.now()) + 1200;
     };
@@ -2817,6 +2836,8 @@
     if (pageImg.dataset.loadPage !== String(st.page)) return;   /* 图还是上一页，别拿它算坐标 */
     if (st.pageTurn) {
       st.pageTurn = false;
+      sc.chasing = false;
+      sc.row = hit.i;
       stopScrollAnim();
       snapFollow();                /* 换页：一次落位，避免倒着滑一屏 */
     } else if (st.playing) {
@@ -2847,6 +2868,78 @@
       '<rect x="' + (x - 0.8).toFixed(1) + '" y="' + y + '" width="1.6" height="' + h + '" fill="#16a34a"/>' +
       '<polygon points="' + x.toFixed(1) + ',' + y + ' ' + (x - 4.5).toFixed(1) + ',' + (y - 7) + ' ' +
       (x + 4.5).toFixed(1) + ',' + (y - 7) + '" fill="#16a34a"/>';
+  }
+
+  /* ---------- 播放 ---------- */
+  var raf = 0;
+  function loop() { raf = requestAnimationFrame(loop); paint(); }
+  function startLoop() { if (!raf) loop(); }
+  function stopLoop() { if (raf) { cancelAnimationFrame(raf); raf = 0; } }
+
+  var ticking = 0;
+  function paint() {
+    var t = time(), dur = totalDur();
+    var f = dur ? Math.min(1, t / dur) : 0;
+    var fill = el('dqFill'), head = el('dqHeadPtr');
+    if (fill) fill.style.width = (f * 100) + '%';
+    if (head) head.style.left = (f * 100) + '%';
+    el('dqCur').textContent = mmss(t);
+    el('dqDur').textContent = mmss(dur);
+    paintPdf();
+  }
+  function syncPlay() {
+    var a = curAudio(), on = !!(a && !a.paused);
+    st.playing = on;
+    el('dqPlay').textContent = on ? '❚❚' : '▶';
+    if (on) startLoop(); else { stopLoop(); paint(); }
+  }
+  function bindAudio(a) {
+    if (!a || a.dataset.dq) return;
+    a.dataset.dq = '1';
+    a.addEventListener('play', syncPlay);
+    a.addEventListener('pause', syncPlay);
+    a.addEventListener('ended', syncPlay);
+    a.addEventListener('timeupdate', function () { if (!st.playing) paint(); });
+    a.addEventListener('loadedmetadata', paint);
+    a.addEventListener('durationchange', paint);
+    a.addEventListener('error', function () {
+      if (a === curAudio() && el('dqWarn')) {
+        el('dqWarn').textContent = '⚠ 音频没能加载，播放头不会动（谱面仍可点选定位）。可在设置里检查音频源。';
+        el('dqWarn').hidden = false;
+      }
+    });
+  }
+  function togglePlay() {
+    var a = curAudio();
+    if (!a || !a.getAttribute('src')) return;
+    if (!a.paused) { a.pause(); return; }
+    var p = a.play();
+    if (p && p.catch) p.catch(function () {});
+  }
+  function seek(t) {
+    var a = curAudio();
+    if (!a) return;
+    try { a.currentTime = Math.max(0, t); } catch (e) {}
+    disp.x = null;
+    disp.last = 0;
+    paint();
+    snapFollow();
+  }
+
+  /* 跳跃式定位：直接落到锚点（平滑只用于自动跟随） */
+  function snapFollow() {
+    var hit = barAt(time());
+    if (!hit) return;
+    var g = barGeo(hit.i);
+    if (!g || g.page !== st.page) return;
+    var img = el('dqPageImg');
+    if (!img || img.dataset.loadPage !== String(st.page)) return;
+    var dr = systemDocRect(g);
+    if (!dr) return;
+    var an = followAnchor();
+    var goal = Math.max(0, Math.min(dr.top + dr.height / 2 - an.y, maxScroll()));
+    stopScrollAnim();
+    window.scrollTo(0, goal);
   }
 
   /* ---------- 播放 ---------- */
@@ -3129,6 +3222,8 @@
       ' · ♩=' + (Math.round(st.bars[0].bpm || 0) || '—');
     el('dqWarn').hidden = true;
     el('dqScore').dataset.ready = '1';
+    st.pageTurn = true;          /* 首次上屏直接落到居中位置 */
+    sc.chasing = false;
     buildCols();
     if (st.layout && st.colsBad > Math.max(3, st.bars.length * 0.35)) {
       el('dqWarn').textContent = '⚠ 这份 PDF 的音符列与谱面数据不完全一致，播放头在这首里只能近似对齐' +
