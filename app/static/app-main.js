@@ -598,8 +598,12 @@
     fetch('/api/status').then(function(r){ return r.json(); }).then(function(s){
       applyStatus(s);
     }).catch(function(){
-      /* 服务不通时不要每次弹提示，仅置灰 */
+      /* 服务不通时不要每次弹提示，仅置灰；骨架屏要换成可重试的提示 */
       setMark('bad');
+      var box = $('#history');
+      if(box && !box.querySelector('.hrow')){
+        box.innerHTML = '<div class="empty">读取失败<br><span class="hint">点「刷新」重试</span></div>';
+      }
     });
   }
 
@@ -776,6 +780,16 @@
   var pv = { base: null, page: 1, pages: 0 };
 
   var _pdfPrevFocus = null;
+  /* 关闭 PDF 预览：隐藏 + 清图 + 焦点归还（aria-modal 要求闭环） */
+  function closePdf(){
+    hide($('#pdfModal'));
+    var im = $('#pvImg'); if(im) im.src = '';
+    var back = _pdfPrevFocus;
+    _pdfPrevFocus = null;
+    if(back && back.focus && document.contains(back)) { try { back.focus(); } catch(e){} }
+  }
+  window.dqClosePdf = closePdf;
+
   function openPdf(name){
     _pdfPrevFocus = document.activeElement;
     var base = stripExt(name);
@@ -1142,7 +1156,9 @@
     $('#setupStartBtn').hidden = false; $('#setupStartBtn').disabled = false;
     $('#setupDoneBtn').hidden = true; $('#setupBackBtn').hidden = true;
     $('#setupMsg').textContent = '';
-    show($('#setupModal'));
+    /* 走外壳路由：否则「设置页 + 向导页」会同时可见，侧栏高亮也会留在设置 */
+    if(window.dqOpenSetup) window.dqOpenSetup();
+    else { show($('#setupModal')); hide($('#setModal')); }
     if(resume) startInstall(null, true);
   }
 
@@ -1351,8 +1367,7 @@
     if(c.manual && !confirm(c.name + ' 通常需要手动安装（例如 MuseScore 要管理员权限）。\n仍要尝试自动安装吗？')) return;
     setupChosen = {};
     setupChosen[id] = true;
-    show($('#setupModal'));
-    hide($('#setModal'));
+    if(window.dqOpenSetup) window.dqOpenSetup(); else { show($('#setupModal')); hide($('#setModal')); }
     $('#setupStep1').hidden = true; $('#setupStep2').hidden = false; $('#setupStep3').hidden = true;
     startInstall([id], false);
   }
@@ -1450,7 +1465,8 @@
     m.addEventListener('click', function(e){ if(e.target === m) hide(m); });
   }
   bindModal('#pdfModal', '#pdfClose');
-  bindModal('#setModal', '#setClose');
+  /* #setModal / #setupModal 现在是「页面」不是弹窗：点击容器自身=点留白，
+     不能再当成"点遮罩关闭"，否则点标题与卡片之间的空隙整页就没了。 */
   /* 预览器翻页 / 缩放 / 键盘 */
   $('#pvPrev').addEventListener('click', function(){ pvGo(-1); });
   $('#pvNext').addEventListener('click', function(){ pvGo(1); });
@@ -1458,9 +1474,8 @@
   document.addEventListener('keydown', function(e){
     var open = !$('#pdfModal').hidden;
     if(e.key === 'Escape'){
-      hide($('#pdfModal')); $('#pvImg').src = '';
-      hide($('#setModal')); hide($('#setupModal'));
-      return;
+      if(open){ closePdf(); e.stopPropagation(); }
+      return;                     /* 设置/向导是页面，Esc 不该把它们关掉 */
     }
     if(!open) return;
     if(e.key === 'ArrowLeft'){ pvGo(-1); }
@@ -1468,9 +1483,12 @@
   });
 
   function openSettings(){
-    if(window.dqOpenSettings) window.dqOpenSettings(); else show($('#setModal'));
-    loadModels();
+    var box = $('#setModal');
+    if(window.dqOpenSettings){ if(box && box.hidden) window.dqOpenSettings(); }
+    else { show(box); loadModels(); }        /* 外壳不可用时才自己加载，避免重复请求 */
   }
+  window.dqLoadModels = loadModels;
+  window.dqLoadSetup = function(){ loadSetupStatus(); };
   $('#settingsBtn').addEventListener('click', openSettings);
   $('#footSettings').addEventListener('click', function(e){ e.preventDefault(); openSettings(); });
   $('#footOpenDocs').addEventListener('click', function(e){ e.preventDefault(); toast('使用说明：程序目录下的 使用说明.txt / README.md'); });
@@ -1502,9 +1520,6 @@
     loadSetupStatus();
   });
   $('#setupClose').addEventListener('click', function(){ hide($('#setupModal')); });
-  $('#setupModal').addEventListener('click', function(e){
-    if(e.target === $('#setupModal')) hide($('#setupModal'));
-  });
 
   /* 设置里的组件按钮：单个安装 / 一键补装 / 打开向导 */
   document.addEventListener('click', function(e){
@@ -1525,8 +1540,7 @@
     if(!missing.length){ toast('所有组件都已就绪'); return; }
     setupChosen = {};
     missing.forEach(function(id){ setupChosen[id] = true; });
-    show($('#setupModal'));
-    hide($('#setModal'));
+    if(window.dqOpenSetup) window.dqOpenSetup(); else { show($('#setupModal')); hide($('#setModal')); }
     $('#setupStep1').hidden = true; $('#setupStep2').hidden = false; $('#setupStep3').hidden = true;
     startInstall(missing, false);
   });

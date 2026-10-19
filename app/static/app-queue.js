@@ -22,6 +22,10 @@
     if (m < 1) return '不到 1 分钟';
     return '约 ' + m + ' 分钟';
   }
+  function esc(t) {
+    return String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
   function api(url, body) {
     return fetch(url, body ? {method: 'POST', headers: {'Content-Type': 'application/json'},
                               body: JSON.stringify(body)} : {}).then(function (r) { return r.json(); });
@@ -66,22 +70,26 @@
     if (q.items.length) {
       html += '<div class="qlist">' + q.items.map(function (it) {
         var cls = it.state === 'done' ? 'ok' : it.state === 'running' ? 'req'
-                : it.state === 'failed' ? 'miss' : 'opt';
+                : (it.state === 'failed' || it.state === 'missing') ? 'miss' : 'opt';
         var tag = it.state === 'done' ? '完成' : it.state === 'running' ? '进行中'
-                : it.state === 'failed' ? '失败' : '等待';
+                : it.state === 'failed' ? '失败'
+                : it.state === 'missing' ? '找不到文件' : '等待';
         return '<div class="qrow">' +
-          '<span class="qname">' + it.song + '</span>' +
+          '<span class="qname">' + esc(it.song) + '</span>' +
           '<span class="badge ' + cls + '">' + tag + '</span>' +
-          '<button class="btn ghost sm" data-dqrm="' + it.song + '">移除</button></div>';
+          '<button class="btn ghost sm" data-dqrm="' + esc(it.song) + '">移除</button></div>';
       }).join('') + '</div>';
     } else {
       html += '<div class="empty">队列为空<br><span class="hint">在「新建扒谱」里选好歌，点「加入队列」就会排到这里</span></div>';
     }
-    box.innerHTML = html;
+    var key = JSON.stringify([q.done, q.total, q.paused].concat((q.items || []).map(function (it) {
+      return it.song + ':' + it.state;
+    })));
+    if (box.__key !== key) { box.innerHTML = html; box.__key = key; }
     var add = document.getElementById('dqAdd');
     if (add) add.onclick = function () {
       var n = (document.getElementById('pickedName') || {}).textContent || '';
-      if (!n) { toast('先在下面选一首歌', true); return; }
+      if (!n) { toast('先到「新建扒谱」选一首歌', true); return; }
       api('/api/queue', {action: 'add', songs: [n]}).then(function () {
         refresh();
         if (window.dqShellShow) window.dqShellShow('queue');
@@ -159,7 +167,7 @@
       b.onclick = function () { window.location.href = '/api/diagnostics'; };
       retry.parentNode.appendChild(b);
     }
-    var foot = document.querySelector('#setModal .modal-foot');
+    var foot = document.querySelector('#setModal .actions');
     if (foot && !document.getElementById('dqDiagSet')) {
       var b2 = el('button', 'btn ghost sm', '导出诊断包');
       b2.id = 'dqDiagSet';

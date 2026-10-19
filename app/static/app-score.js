@@ -233,8 +233,18 @@
     sc.goal = null;
     sc.busy = false;
   }
+  function reduceMotion() {
+    try { return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches; }
+    catch (e) { return false; }
+  }
   function easeScrollTo(goal, maxStep) {
     goal = Math.max(0, Math.min(goal, scrollMaxH()));
+    if (reduceMotion()) {                     /* 减少动效：直接落位，不做 rAF 追帧 */
+      stopScrollAnim();
+      var m0 = scroller();
+      if (m0 === document.documentElement) window.scrollTo(0, goal); else m0.scrollTop = goal;
+      return;
+    }
     sc.goal = goal;
     if (sc.raf) return;
     var cap = maxStep || 12;                 /* 每帧最多 12px ≈ 720px/s */
@@ -654,6 +664,9 @@
         var tgt = ev.target;
         var tag = (tgt && tgt.tagName) || '';
         if (/^(INPUT|SELECT|TEXTAREA)$/.test(tag)) return;
+        var cmd = document.getElementById('cmdk');
+        if (cmd && !cmd.hidden) return;                 /* 命令面板开着：空格/方向键归它 */
+        if (window.__dqCmdkOpen) return;
         if (tgt && tgt.closest && tgt.closest('button,a,[contenteditable]')) return;   /* 别抢按钮的空格激活 */
         if (el('dqScore').hidden) return;
         var scEl = el('dqScore');

@@ -129,6 +129,9 @@ main{flex:1;overflow-y:auto;min-height:0}
 
 /* 页面标题 */
 .pagetitle{display:flex;align-items:flex-end;gap:10px;margin:0 auto var(--s4);max-width:980px}
+/* 设置/向导页：标题与卡片必须同宽，否则左右各错 80/100px */
+#setModal .pagetitle,#setModal .card{max-width:820px}
+#setupModal .pagetitle,#setupModal .card{max-width:780px}
 .pagetitle h1{font-size:22px;font-weight:600;letter-spacing:-.2px}
 .pagetitle .sub{font-size:13px;color:var(--ink-3);padding-bottom:2px}
 
@@ -424,7 +427,7 @@ h1{font-size:22px;font-weight:600;letter-spacing:-.2px}
 .toast{
   position:fixed;left:50%;bottom:28px;transform:translate(-50%,12px);z-index:80;
   background:#1c1c1e;color:#fff;font-size:12.5px;padding:10px 16px;border-radius:10px;
-  box-shadow:var(--sh-float);opacity:0;pointer-events:none;transition:opacity var(--dur) var(--ease),transform var(--dur) var(--ease);
+  box-shadow:var(--sh-float);opacity:0;pointer-events:none;z-index:100;transition:opacity var(--dur) var(--ease),transform var(--dur) var(--ease);
   max-width:70vw;text-align:center
 }
 .toast.show{opacity:1;transform:translate(-50%,0)}
@@ -538,3 +541,5 @@ footer a:hover{color:var(--accent)}
   *,*::before,*::after{animation-duration:.001ms !important;animation-iteration-count:1 !important;
     transition-duration:.001ms !important;scroll-behavior:auto !important}
 }
+
+.cmdk-empty{padding:18px 16px;text-align:center;color:var(--ink-3);font-size:12.5px}

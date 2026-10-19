@@ -10,6 +10,7 @@ config.json
 app/service_stamp.json
 app/task_state.json
 app/job_stats.json
+app/queue.json
 app/*.bak
 app/*.bak_*
 

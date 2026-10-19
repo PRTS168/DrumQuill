@@ -37,7 +37,11 @@
     var m = document.querySelector('main');
     if (m) m.scrollTop = 0; else { try { window.scrollTo(0, 0); } catch (e) {} }
     if (name === 'library') refreshLib();          /* 每次进库都重新读一次产物目录 */
-    if (name === 'settings') { var sb = $('settingsBtn'); if (sb) sb.click(); }
+    if (name === 'settings') {
+      /* 别用「点按钮」驱动（会和 openSettings 互相递归）；直接刷新这一页要的数据 */
+      if (window.dqLoadSetup) window.dqLoadSetup();
+      if (window.dqLoadModels) window.dqLoadModels();
+    }
     if (name === 'queue') refreshQueueBadge();
   }
 
@@ -72,7 +76,8 @@
     if (document.hidden) return;
     fetch('/api/status', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (st) {
       var q = (st && st.queue) || {};
-      var left = Math.max(0, (q.total || 0) - (q.done || 0));
+      var items = (q && q.items) || [];
+      var left = items.filter(function (it) { return it.state === 'pending' || it.state === 'running'; }).length;
       var b = $('navQueue');
       if (b) b.textContent = left;
       var e = $('queueEta');
@@ -96,9 +101,10 @@
   setTimeout(refreshBadge, 1500);
   setTimeout(refreshQueueBadge, 1800);
   setInterval(function () {
+    if (document.hidden) return;
     refreshBadge();
     refreshQueueBadge();
-  }, 5000);
+  }, 10000);
 
   /* 任务完成 / 打开历史谱面时，确保用户停在「新建扒谱」这一页，否则会“打开但看不见” */
   function ensureNewPage() {
@@ -144,10 +150,17 @@
   function cmdkRender() {
     var e = cmdkEls();
     if (!e.list) return;
+    if (!ck.list.length) {
+      e.list.innerHTML = '<div class="cmdk-empty" role="presentation">没有匹配的命令</div>';
+      if (e.input) e.input.removeAttribute('aria-activedescendant');
+      return;
+    }
     e.list.innerHTML = ck.list.map(function (c, i) {
-      return '<div class="cmdk-item' + (i === ck.sel ? ' on' : '') + '" role="option" data-i="' + i + '">' +
+      return '<div class="cmdk-item' + (i === ck.sel ? ' on' : '') + '" role="option" data-i="' + i + '"' +
+        ' id="cmdkOpt' + i + '" aria-selected="' + (i === ck.sel ? 'true' : 'false') + '">' +
         '<span class="ci-t">' + c.t + '</span><span class="ci-s">' + (c.s || '') + '</span></div>';
-    }).join('') || '<div class="empty" style="padding:16px">没有匹配的命令</div>';
+    }).join('');
+    if (e.input) e.input.setAttribute('aria-activedescendant', 'cmdkOpt' + ck.sel);
     Array.prototype.forEach.call(e.list.querySelectorAll('.cmdk-item'), function (node) {
       node.addEventListener('mousedown', function (ev) {
         ev.preventDefault();
@@ -172,7 +185,9 @@
     if (!e.box) return;
     ck.prevFocus = document.activeElement;
     ck.open = true;
+    window.__dqCmdkOpen = true;
     e.box.hidden = false;
+    if (e.input) { e.input.setAttribute('aria-expanded', 'true'); }
     if (e.input) { e.input.value = ''; e.input.focus(); }
     cmdkFilter('');
   }
@@ -181,13 +196,19 @@
     var e = cmdkEls();
     if (!e.box) return;
     ck.open = false;
+    window.__dqCmdkOpen = false;
     e.box.hidden = true;
+    if (e.input) { e.input.setAttribute('aria-expanded', 'false'); }
     if (ck.prevFocus && ck.prevFocus.focus) { try { ck.prevFocus.focus(); } catch (x) {} }
   }
 
   function cmdkRun() {
     var c = ck.list[ck.sel];
-    if (!c) return;
+    if (!c) {
+      var f = document.querySelector('.cmdk-foot');
+      if (f) { f.textContent = '没有匹配的命令'; setTimeout(function(){ f.textContent = '↑↓ 选择 · Enter 执行 · Esc 关闭 · Ctrl/⌘ + K 唤起'; }, 1400); }
+      return;
+    }
     cmdkClose();
     setTimeout(function () { c.run(); }, 0);
   }
@@ -199,11 +220,23 @@
     e.box.addEventListener('mousedown', function (ev) { if (ev.target === e.box) cmdkClose(); });
     if (e.input) {
       e.input.addEventListener('input', function () { cmdkFilter(e.input.value); });
+      e.input.setAttribute('role', 'combobox');
+      e.input.setAttribute('aria-expanded', 'false');
+      e.input.setAttribute('aria-controls', 'cmdkList');
+      e.input.setAttribute('aria-autocomplete', 'list');
       e.input.addEventListener('keydown', function (ev) {
-        if (ev.key === 'ArrowDown') { ev.preventDefault(); ck.sel = Math.min(ck.list.length - 1, ck.sel + 1); cmdkRender(); }
-        else if (ev.key === 'ArrowUp') { ev.preventDefault(); ck.sel = Math.max(0, ck.sel - 1); cmdkRender(); }
-        else if (ev.key === 'Enter') { ev.preventDefault(); cmdkRun(); }
-        else if (ev.key === 'Escape') { ev.preventDefault(); cmdkClose(); }
+        if (ev.key === 'ArrowDown') { ev.preventDefault(); ev.stopPropagation(); if (ck.list.length) { ck.sel = Math.min(ck.list.length - 1, ck.sel + 1); cmdkRender(); } }
+        else if (ev.key === 'ArrowUp') { ev.preventDefault(); ev.stopPropagation(); if (ck.list.length) { ck.sel = Math.max(0, ck.sel - 1); cmdkRender(); } }
+        else if (ev.key === 'Enter') { ev.preventDefault(); ev.stopPropagation(); cmdkRun(); }
+        else if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); cmdkClose(); }
+      });
+      /* 面板任意位置点一下都把焦点送回输入框，避免空格穿透到播放器 */
+      var boxEl = $('cmdk');
+      if (boxEl) boxEl.addEventListener('mousedown', function (ev) {
+        if (ev.target === boxEl || (ev.target.classList && ev.target.classList.contains('cmdk-box'))) {
+          ev.preventDefault();
+          e.input.focus();
+        }
       });
     }
   }
@@ -216,7 +249,7 @@
       bindCmdk();
       return;
     }
-    if (ev.key === 'Escape' && ck.open) { ev.preventDefault(); cmdkClose(); }
+    if (ev.key === 'Escape' && ck.open) { ev.preventDefault(); ev.stopPropagation(); cmdkClose(); }
   });
 
   setTimeout(bindCmdk, 800);
