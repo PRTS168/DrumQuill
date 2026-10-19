@@ -435,22 +435,10 @@
   .barnav .cur{color:var(--accent-ink);font-weight:600}
   .barnav audio{display:none}
 
-  /* 动态谱（自绘鼓谱 + 播放头） */
-  .tabwrap{background:#fff}
-  .tabscroll{position:relative;max-height:min(66vh,620px);overflow-y:auto;padding-bottom:10px;scroll-behavior:smooth}
-  .tabrow{position:relative;height:90px;overflow:hidden}
-  .tabrow svg{display:block}
-  .tabrow+.tabrow{border-top:1px solid #f3f5f7}
-  .tabrow.cur{background:rgba(34,197,94,.045)}
-  .phcol{position:absolute;border:2px solid #22c55e;background:rgba(34,197,94,.13);border-radius:9px;
-    pointer-events:none;box-sizing:border-box;z-index:2}
-  .phline{position:absolute;width:1.5px;background:rgba(34,197,94,.9);pointer-events:none;z-index:1}
   #dqScore[data-explicit="1"] .prod,
   #dqScore[data-explicit="1"] .logwrap{display:none}
   .sh-hist{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:11.5px;color:var(--ink-3)}
   .sh-hist b{color:var(--accent-ink);font-family:var(--mono);font-weight:600}
-  .vmseg{height:30px}
-  .vmseg button{font-size:12px;padding:0 12px}
 
   /* 产物 */
   .prod{padding:4px 20px 12px}
@@ -613,21 +601,17 @@
         </div>
       </div>
       <div class="sh-tools">
-        <div class="seg vmseg" id="dqViewMode">
-          <button data-view="pdf" class="on">PDF 谱</button>
-          <button data-view="tab">简化谱</button>
-        </div>
-        <span class="pgnav" id="dqPdfTools" hidden>
+        <span class="pgnav">
           <button class="btn ghost sm" id="dqPrevPage" title="上一页（←）">‹</button>
           <span class="pv-page" id="dqPageLabel">1 / 1</span>
           <button class="btn ghost sm" id="dqNextPage" title="下一页（→）">›</button>
-          <select class="inp" id="dqZoom" title="清晰度">
-            <option value="fit">适应宽度</option>
-            <option value="page">适应整页</option>
-            <option value="hd">高清</option>
-            <option value="big">放大</option>
-          </select>
         </span>
+        <select class="inp" id="dqZoom" title="清晰度">
+          <option value="fit">适应宽度</option>
+          <option value="page">适应整页</option>
+          <option value="hd">高清</option>
+          <option value="big">放大</option>
+        </select>
       </div>
     </div>
 
@@ -645,11 +629,7 @@
 
     <div class="note warn" id="dqWarn" hidden style="margin:10px 20px 0"></div>
 
-    <div class="tabwrap" id="dqTab">
-      <div class="tabscroll" id="dqScroll"></div>
-    </div>
-
-    <div class="paper" id="dqPaper" hidden>
+    <div class="paper" id="dqPaper">
       <div class="pg" id="dqStage">
         <img id="dqPageImg" alt="鼓谱">
         <svg id="dqOverlay"></svg>
@@ -2515,19 +2495,15 @@
 })();
 </script>
 <script>
-/* ===== 谱面工作台：动态谱（自绘鼓谱 + 绿色播放头）+ 打印版 PDF ===== */
+/* ===== 谱面工作台：就是导出那张 PDF，绿色播放头跟着音乐走 ===== */
 (function () {
   'use strict';
   var el = function (id) { return document.getElementById(id); };
   var st = {
-    song: '', bars: [], layout: null, page: 1, zoom: 'fit', src: 'mix', key: '',
-    playing: false, view: 'pdf', bpr: 2, gutter: 34, barW: 0, rows: 0,
-    hit: null, lastRow: -1
+    song: '', bars: [], layout: null, page: 1, zoom: 'fit', src: 'mix',
+    key: '', playing: false, explicit: false
   };
   var DPI = { fit: 150, page: 200, hd: 200, big: 320 };
-  /* 鼓谱几何（像素，行高固定，宽度随容器） */
-  var GAP = 8, STAFF_TOP = 40, BEAM_Y = 20, ROW_H = 90;
-  var LINE_BOTTOM = STAFF_TOP + GAP * 4;
 
   /* ---------- 工具 ---------- */
   function curAudio() { return el(st.src === 'drum' ? 'resAudio' : 'dqAudio'); }
@@ -2541,160 +2517,16 @@
     var a = curAudio();
     if (a && a.duration && isFinite(a.duration)) return a.duration;
     var b = st.bars[st.bars.length - 1];
-    return b ? (b.end || b.start + 2) : 0;
+    return b ? (b.end ? b.end : b.start + 2) : 0;
   }
   function barAt(t) {
     for (var i = 0; i < st.bars.length; i++) {
-      var b = st.bars[i], s = b.start, e = b.end || (s + 2);
+      var b = st.bars[i], s = b.start, e = b.end ? b.end : (s + 2);
       if (t >= s && t < e) return { i: i, frac: Math.min(0.999, (t - s) / Math.max(0.15, e - s)) };
     }
     if (st.bars.length && t < st.bars[0].start) return { i: 0, frac: 0 };
     return null;
   }
-
-  /* ---------- 动态谱渲染 ---------- */
-  function drumY(cls) {
-    if (cls === 'hihat' || cls === 'cymbal') return STAFF_TOP;
-    if (cls === 'tom') return STAFF_TOP + GAP;
-    if (cls === 'snare') return STAFF_TOP + GAP * 2;
-    if (cls === 'kick') return STAFF_TOP + GAP * 4;
-    return STAFF_TOP + GAP * 2;
-  }
-  function xGlyph(x, y) {
-    return '<path d="M' + (x - 3.9) + ' ' + (y - 3.9) + 'L' + (x + 3.9) + ' ' + (y + 3.9) +
-      'M' + (x - 4.4) + ' ' + (y + 3.9) + 'L' + (x + 4.4) + ' ' + (y - 4.4) +
-      '" stroke="#2b333a" stroke-width="1.4" fill="none" stroke-linecap="round"/>';
-  }
-  function headSVG(cls, x, y) {
-    if (cls === 'hihat') return xGlyph(x, y);
-    if (cls === 'cymbal') {
-      return '<circle cx="' + x + '" cy="' + y + '" r="5.2" fill="none" stroke="#2b333a" stroke-width="1.1"/>' +
-        xGlyph(x, y);
-    }
-    return '<ellipse cx="' + x + '" cy="' + y + '" rx="4.2" ry="3.1" fill="#2b333a"/>';
-  }
-  function notesSVG(bar, bx, barW) {
-    var unit = barW / 16, out = [], byP = {}, ps = [], p, b;
-    (bar.notes || []).forEach(function (n) {
-      var q = Math.max(0, Math.min(15, n.p | 0));
-      (byP[q] = byP[q] || []).push(n);
-    });
-    ps = Object.keys(byP).map(Number).sort(function (a, b) { return a - b; });
-    ps.forEach(function (q) {
-      var x = bx + (q + 0.5) * unit;
-      var ys = byP[q].map(function (n) { return drumY(n.c); });
-      /* 同一列多个鼓共用一根符干：从最低的音符头一路连到符杠 */
-      var bot = Math.max.apply(null, ys);
-      out.push('<line x1="' + x + '" y1="' + (bot + 2) + '" x2="' + x + '" y2="' + BEAM_Y +
-        '" stroke="#3a444c" stroke-width="1.2"/>');
-      byP[q].forEach(function (n) { out.push(headSVG(n.c, x, drumY(n.c))); });
-    });
-    for (b = 0; b < 4; b++) {
-      var g = ps.filter(function (q) { return Math.floor(q / 4) === b; });
-      if (!g.length) continue;
-      var x0 = bx + (g[0] + 0.5) * unit;
-      if (g.length >= 2) {
-        var x1 = bx + (g[g.length - 1] + 0.5) * unit;
-        out.push('<rect x="' + x0 + '" y="' + (BEAM_Y - 1.8) + '" width="' + (x1 - x0) +
-          '" height="3.6" fill="#3a444c"/>');
-      } else {
-        out.push('<rect x="' + x0 + '" y="' + (BEAM_Y - 1.8) + '" width="7.5" height="3.6" fill="#3a444c"/>');
-      }
-    }
-    return out.join('');
-  }
-
-  function buildTab() {
-    var sc = el('dqScroll');
-    if (!sc || !st.bars.length) return;
-    var W = sc.clientWidth || 900;
-    if (W < 200) W = 900;
-    st.lastW = W;
-    st.bpr = W >= 700 ? 2 : 1;
-    var avail = W - st.gutter - 10;
-    st.barW = avail / st.bpr;
-    st.rows = Math.ceil(st.bars.length / st.bpr);
-    var html = [], r, k;
-    var lastBpm = 0;
-    for (r = 0; r < st.rows; r++) {
-      var i0 = r * st.bpr;
-      var s = ['<svg width="' + W + '" height="' + ROW_H + '" viewBox="0 0 ' + W + ' ' + ROW_H + '">'];
-      for (k = 0; k < 5; k++) {
-        s.push('<line x1="' + st.gutter + '" y1="' + (STAFF_TOP + k * GAP) + '" x2="' +
-          (st.gutter + st.barW * Math.min(st.bpr, st.bars.length - i0)) + '" y2="' +
-          (STAFF_TOP + k * GAP) + '" stroke="#b9c2c9" stroke-width="1"/>');
-      }
-      for (k = 0; k < st.bpr; k++) {
-        var bi = i0 + k;
-        if (bi >= st.bars.length) break;
-        var bx = st.gutter + k * st.barW;
-        s.push('<line x1="' + bx + '" y1="' + (STAFF_TOP - 5) + '" x2="' + bx + '" y2="' +
-          (LINE_BOTTOM + 5) + '" stroke="#a7b2ba" stroke-width="1.2"/>');
-        s.push('<text x="' + (bx + 2) + '" y="10" font-size="10.5" fill="#9aa4ac" font-family="Consolas,\'Cascadia Mono\',monospace">' +
-          (bi + 1) + '</text>');
-
-        s.push(notesSVG(st.bars[bi], bx, st.barW));
-      }
-      var endX = st.gutter + st.barW * Math.min(st.bpr, st.bars.length - i0);
-      s.push('<line x1="' + endX + '" y1="' + (STAFF_TOP - 5) + '" x2="' + endX + '" y2="' +
-        (LINE_BOTTOM + 5) + '" stroke="#a7b2ba" stroke-width="1.2"/>');
-      s.push('</svg>');
-      html.push('<div class="tabrow" data-row="' + r + '">' + s.join('') + '</div>');
-    }
-    sc.innerHTML = html.join('') +
-      '<div class="phcol" id="dqPhCol" hidden></div><div class="phline" id="dqPhLine" hidden></div>';
-    st.lastRow = -1;
-    placeHead(true);
-  }
-
-  /* 播放头：绿色方框 + 细竖线 */
-  function placeHead(force) {
-    if (st.view !== 'tab') return;
-    var ph = el('dqPhCol'), ln = el('dqPhLine');
-    if (!ph || !ln || !st.bars.length) return;
-    var hit = barAt(time());
-    if (!hit) { ph.hidden = true; ln.hidden = true; st.hit = null; return; }
-    var row = Math.floor(hit.i / st.bpr), col = hit.i % st.bpr;
-    var boss = el('dqScroll');
-    var x0 = st.gutter + col * st.barW;
-    var cw = st.barW / 16;
-    var ci = Math.min(15, Math.floor(hit.frac * 16));
-    st.hit = hit;
-    ph.hidden = false; ln.hidden = false;
-    ph.style.left = (x0 + ci * cw) + 'px';
-    ph.style.width = cw + 'px';
-    ph.style.top = (row * ROW_H + BEAM_Y - 9) + 'px';
-    ph.style.height = (LINE_BOTTOM + 13 - (BEAM_Y - 9)) + 'px';
-    var xa = x0 + hit.frac * st.barW;
-    ln.style.left = (xa - 0.75) + 'px';
-    ln.style.top = (row * ROW_H + 4) + 'px';
-    ln.style.height = (LINE_BOTTOM + 8) + 'px';
-    if (force || row !== st.lastRow) {
-      st.lastRow = row;
-      var prev = boss.querySelector('.tabrow.cur');
-      if (prev) prev.classList.remove('cur');
-      var curRow = boss.querySelector('.tabrow[data-row="' + row + '"]');
-      if (curRow) curRow.classList.add('cur');
-      var top = row * ROW_H - boss.clientHeight / 2 + ROW_H / 2;
-      var max = boss.scrollHeight - boss.clientHeight;
-      top = Math.max(0, Math.min(max > 0 ? max : 0, top));
-      if (boss.scrollTop !== top) {
-        try { boss.scrollTo({ top: top, behavior: 'smooth' }); }
-        catch (e) { boss.scrollTop = top; }
-      }
-    }
-    /* 小节信息 */
-    var b = st.bars[hit.i];
-    el('dqBarNo').textContent = hit.i + 1;
-    el('dqBarTime').textContent = ' · ' + mmss(b.start) + '–' + mmss(b.end || b.start + 2);
-    /* 自动翻 PDF 页（打印版模式下） */
-    if (st.view === 'pdf' && st.layout) {
-      var g = barGeo(hit.i);
-      if (g && g.page !== st.page) { st.page = g.page; renderPdf(); }
-    }
-  }
-
-  /* ---------- 打印版 PDF ---------- */
   function barGeo(idx) {
     if (!st.layout) return null;
     var n = 0;
@@ -2711,6 +2543,8 @@
     }
     return null;
   }
+
+  /* ---------- 打印版 PDF ---------- */
   function renderPdf() {
     var pg = st.layout && st.layout.pages[st.page - 1];
     if (!pg) return;
@@ -2726,6 +2560,25 @@
     img.style.width = st.zoom === 'page' ? 'auto' : (st.zoom === 'big' ? '190%' : '100%');
     img.style.height = st.zoom === 'page' ? '100%' : '';
   }
+
+  /* 当前系统行滚进视野（只在真的跑出视野时才滚，别跟用户抢） */
+  function scrollToSystem(g) {
+    var img = el('dqPageImg'), pg = st.layout && st.layout.pages[st.page - 1];
+    if (!g || !img || !pg) return;
+    var r = img.getBoundingClientRect();
+    var k = r.width / pg.w;
+    if (!k) return;
+    var baseY = r.top + window.scrollY;
+    var top = baseY + (g.top - 24) * k;
+    var bottom = baseY + (g.bottom + 24) * k;
+    var vTop = window.scrollY + 130;
+    var vBottom = window.scrollY + window.innerHeight - 40;
+    if (top < vTop || bottom > vBottom) {
+      try { window.scrollTo({ top: Math.max(0, top - 150), behavior: 'smooth' }); }
+      catch (e) { window.scrollTo(0, Math.max(0, top - 150)); }
+    }
+  }
+
   function paintPdf() {
     var ov = el('dqOverlay');
     if (!ov || !st.layout) return;
@@ -2733,11 +2586,16 @@
     if (!hit) { ov.innerHTML = ''; return; }
     var g = barGeo(hit.i);
     if (!g) { ov.innerHTML = ''; return; }
+    if (g.page !== st.page) {
+      st.page = g.page;
+      renderPdf();
+      scrollToSystem(g);
+    }
     var pg = st.layout.pages[st.page - 1];
     var b = st.bars[hit.i];
     if (b) {
       el('dqBarNo').textContent = hit.i + 1;
-      el('dqBarTime').textContent = ' · ' + mmss(b.start) + '–' + mmss(b.end || b.start + 2);
+      el('dqBarTime').textContent = ' · ' + mmss(b.start) + '–' + mmss(b.end ? b.end : b.start + 2);
     }
     var pad = (g.bottom - g.top) * 0.24;
     var h = g.bottom - g.top + pad * 2, y = g.top - pad;
@@ -2746,20 +2604,21 @@
     var bx = g.x0 + bi * beat;
     var x = g.x0 + (g.x1 - g.x0) * hit.frac;
     ov.innerHTML =
-      /* 当前系统行：整行极淡底 */
       '<rect x="24" y="' + y + '" width="' + (pg.w - 48) + '" height="' + h + '" fill="rgba(34,197,94,0.05)"/>' +
-      /* 当前小节 */
       '<rect x="' + g.x0 + '" y="' + y + '" width="' + (g.x1 - g.x0) + '" height="' + h + '" fill="rgba(34,197,94,0.10)"/>' +
-      /* 当前那一拍：明显的绿柱 */
       '<rect x="' + bx.toFixed(1) + '" y="' + y + '" width="' + beat.toFixed(1) + '" height="' + h + '" fill="rgba(34,197,94,0.26)"/>' +
-      /* 精确位置：细亮线 + 顶部小三角 */
       '<rect x="' + (x - 0.8).toFixed(1) + '" y="' + y + '" width="1.6" height="' + h + '" fill="#16a34a"/>' +
       '<polygon points="' + x.toFixed(1) + ',' + y + ' ' + (x - 4.5).toFixed(1) + ',' + (y - 7) + ' ' +
       (x + 4.5).toFixed(1) + ',' + (y - 7) + '" fill="#16a34a"/>';
   }
 
-  /* ---------- 统一刷新 ---------- */
+  /* ---------- 播放 ---------- */
   var raf = 0;
+  function loop() { raf = requestAnimationFrame(loop); paint(); }
+  function startLoop() { if (!raf) loop(); }
+  function stopLoop() { if (raf) { cancelAnimationFrame(raf); raf = 0; } }
+
+  var ticking = 0;
   function paint() {
     var t = time(), dur = totalDur();
     var f = dur ? Math.min(1, t / dur) : 0;
@@ -2768,13 +2627,8 @@
     if (head) head.style.left = (f * 100) + '%';
     el('dqCur').textContent = mmss(t);
     el('dqDur').textContent = mmss(dur);
-    if (st.view === 'tab') placeHead(false);
-    else paintPdf();
+    paintPdf();
   }
-  function loop() { raf = requestAnimationFrame(loop); paint(); }
-  function startLoop() { if (!raf) loop(); }
-  function stopLoop() { if (raf) { cancelAnimationFrame(raf); raf = 0; } }
-
   function syncPlay() {
     var a = curAudio(), on = !!(a && !a.paused);
     st.playing = on;
@@ -2838,43 +2692,8 @@
     paint();
   }
 
-  /* ---------- 视图切换 ---------- */
-  function setView(v) {
-    st.view = v;
-    var isTab = v === 'tab';
-    el('dqTab').hidden = !isTab;
-    el('dqPaper').hidden = isTab;
-    el('dqPdfTools').hidden = isTab;
-    el('dqSub').textContent = isTab
-      ? '简化谱 · 只看鼓点位置（导出请用 PDF 谱）'
-      : '与打印出来那张 PDF 完全一致 · 绿色播放头跟着音乐走 · 点小节跳转';
-    Array.prototype.forEach.call(document.querySelectorAll('#dqViewMode button'), function (b) {
-      b.classList.toggle('on', b.dataset.view === v);
-    });
-    if (isTab) { if (!st.rows) buildTab(); else placeHead(true); }
-    else { renderPdf(); paintPdf(); }
-  }
-
   /* ---------- 交互 ---------- */
   function bindChrome() {
-    var sc = el('dqScroll');
-    if (sc && !sc.dataset.b) {
-      sc.dataset.b = '1';
-      sc.addEventListener('click', function (ev) {
-        var r = sc.getBoundingClientRect();
-        var y = ev.clientY - r.top + sc.scrollTop;
-        var row = Math.floor(y / ROW_H);
-        var x = ev.clientX - r.left;
-        var col = Math.floor((x - st.gutter) / st.barW);
-        if (col < 0 || col >= st.bpr) return;
-        var bi = row * st.bpr + col;
-        if (bi >= st.bars.length) return;
-        var raw = (x - (st.gutter + col * st.barW)) / st.barW;
-        var q = Math.min(15, Math.max(0, Math.floor(raw * 16)));
-        var bar = st.bars[bi];
-        seek(bar.start + ((q + 0.5) / 16) * (bar.end - bar.start));
-      });
-    }
     var ov = el('dqOverlay');
     if (ov && !ov.dataset.b) {
       ov.dataset.b = '1';
@@ -2906,20 +2725,15 @@
     var back = el('dqHistBack');
     if (back) back.onclick = function () { backToJob(); };
 
-    Array.prototype.forEach.call(document.querySelectorAll('#dqViewMode button'), function (b) {
-      b.onclick = function () { setView(b.dataset.view); };
-    });
-    el('dqPrevPage').onclick = function () { if (st.page > 1) { st.page--; renderPdf(); paintPdf(); } };
+    el('dqPrevPage').onclick = function () {
+      if (st.page > 1) { st.page--; renderPdf(); paintPdf(); }
+    };
     el('dqNextPage').onclick = function () {
       if (st.layout && st.page < st.layout.pages.length) { st.page++; renderPdf(); paintPdf(); }
     };
     el('dqZoom').onchange = function () { st.zoom = this.value; renderPdf(); paintPdf(); };
-    el('dqPrevBar').onclick = function () {
-      var h = barAt(time()); goBar(h ? h.i - 1 : 0);
-    };
-    el('dqNextBar').onclick = function () {
-      var h = barAt(time()); goBar(h ? h.i + 1 : 0);
-    };
+    el('dqPrevBar').onclick = function () { var h = barAt(time()); goBar(h ? h.i - 1 : 0); };
+    el('dqNextBar').onclick = function () { var h = barAt(time()); goBar(h ? h.i + 1 : 0); };
     Array.prototype.forEach.call(document.querySelectorAll('#dqSrc button'), function (b) {
       b.onclick = function () { switchSrc(b.dataset.src); };
     });
@@ -2954,13 +2768,10 @@
         if (ev.code === 'Space') { ev.preventDefault(); togglePlay(); }
         else if (ev.key === 'ArrowLeft') {
           ev.preventDefault();
-          if (st.view === 'pdf') { if (st.page > 1) { st.page--; renderPdf(); paintPdf(); } }
-          else { var h = barAt(time()); goBar(h ? h.i - 1 : 0); }
+          if (st.page > 1) { st.page--; renderPdf(); paintPdf(); }
         } else if (ev.key === 'ArrowRight') {
           ev.preventDefault();
-          if (st.view === 'pdf') {
-            if (st.layout && st.page < st.layout.pages.length) { st.page++; renderPdf(); paintPdf(); }
-          } else { var h2 = barAt(time()); goBar(h2 ? h2.i + 1 : 0); }
+          if (st.layout && st.page < st.layout.pages.length) { st.page++; renderPdf(); paintPdf(); }
         }
       });
     }
@@ -2969,8 +2780,7 @@
     window.addEventListener('resize', function () {
       clearTimeout(rt);
       rt = setTimeout(function () {
-        if (st.view === 'tab') buildTab();
-        else if (st.layout) { renderPdf(); paintPdf(); }
+        if (st.layout) { renderPdf(); paintPdf(); }
       }, 220);
     });
   }
@@ -2983,13 +2793,12 @@
     ]);
   }
 
-  /* name: 用于取音频的歌名（带不带扩展名都行）；label: 展示用 */
   function applyScore(sm, lo, name) {
     if (!sm || !sm.ok || !(sm.bars || []).length) return false;
     st.song = name;
     st.bars = sm.bars || [];
     st.layout = (lo && lo.ok) ? lo : null;
-    st.page = 1; st.rows = 0; st.lastRow = -1;
+    st.page = 1;
     var mix = el('dqAudio');
     var want = '/api/source?song=' + encodeURIComponent(name);
     if (mix.getAttribute('src') !== want) mix.setAttribute('src', want);
@@ -3000,36 +2809,13 @@
     el('dqStat').textContent = '共 ' + st.bars.length + ' 小节 · 全长 ' + mmss(totalDur()) +
       ' · ♩=' + (Math.round(st.bars[0].bpm || 0) || '—');
     el('dqWarn').hidden = true;
-    var card = el('dqScore');
-    card.dataset.ready = '1';
-    buildTab();
-    setView(st.view);
-    paint();
+    el('dqScore').dataset.ready = '1';
+    if (st.layout) { renderPdf(); paintPdf(); } else {
+      el('dqOverlay').innerHTML = '';
+    }
     return true;
   }
 
-  function load() {
-    if (st.explicit) return;          /* 用户正从「最近产物」看历史，别被当前任务顶掉 */
-    fetch('/api/status').then(function (r) { return r.json(); }).then(function (s) {
-      if (!s || s.running || !s.song) return;
-      var hasPdf = (s.results || []).some(function (r) { return r.kind === 'pdf'; });
-      if (!hasPdf) return;
-      var k = s.song + '|' + (s.finished || '');
-      if (k === st.key) return;
-      st.key = k;
-      var prev = el('dqScore');
-      if (prev) prev.removeAttribute('data-ready');
-      fetchScore(s.song).then(function (res) {
-        if (!applyScore(res[0], res[1], s.song)) { st.key = ''; return; }
-        var card = el('dqScore');
-        var done = el('viewDone');
-        card.hidden = !(done && !done.hidden);
-        setHist(false, '');
-      }).catch(function () { st.key = ''; });
-    }).catch(function () {});
-  }
-
-  /* 从「最近产物」打开某首歌的动态谱 */
   function setHist(on, label) {
     var box = el('dqHist');
     if (!box) return;
@@ -3038,6 +2824,27 @@
     el('dqScore').dataset.explicit = on ? '1' : '';
   }
 
+  function load() {
+    if (st.explicit) return;             /* 用户正从「最近产物」看历史，别被当前任务顶掉 */
+    fetch('/api/status').then(function (r) { return r.json(); }).then(function (s) {
+      if (!s || s.running || !s.song) return;
+      var hasPdf = (s.results || []).some(function (r) { return r.kind === 'pdf'; });
+      if (!hasPdf) return;
+      var k = s.song + '|' + (s.finished || '');
+      if (k === st.key) return;
+      st.key = k;
+      var card = el('dqScore');
+      if (card) card.removeAttribute('data-ready');
+      fetchScore(s.song).then(function (res) {
+        if (!applyScore(res[0], res[1], s.song)) { st.key = ''; return; }
+        var done = el('viewDone');
+        card.hidden = !(done && !done.hidden);
+        setHist(false, '');
+      }).catch(function () { st.key = ''; });
+    }).catch(function () {});
+  }
+
+  /* 从「最近产物」打开某首歌的动态谱 */
   function openSong(name) {
     var card = el('dqScore');
     if (!card || !name) return;
@@ -3052,10 +2859,8 @@
       }
       setHist(true, name);
       card.hidden = false;
-      try {
-        window.scrollTo({ top: card.offsetTop - 70, behavior: 'smooth' });
-      } catch (e) { window.scrollTo(0, card.offsetTop - 70); }
-      setView(st.view);
+      try { window.scrollTo({ top: card.offsetTop - 70, behavior: 'smooth' }); }
+      catch (e) { window.scrollTo(0, card.offsetTop - 70); }
     }).catch(function () { st.explicit = false; });
   }
 
@@ -3069,7 +2874,7 @@
   window.dqOpen = openSong;
 
   setInterval(load, 2500);
-  setTimeout(load, 600);
+  setTimeout(load, 500);
 })();
 </script>
 </body>
