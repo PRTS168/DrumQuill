@@ -1935,8 +1935,10 @@ def _pdf_layout(pdf_path):
                         per[k].append(hx)
                         break
             cols = []
+            raws = []
             for xs2 in per:
                 xs2.sort()
+                raws.append([round(v, 1) for v in xs2])
                 groups = []
                 for v in xs2:
                     if groups and v - groups[-1][-1] <= 3.2:
@@ -1945,6 +1947,9 @@ def _pdf_layout(pdf_path):
                         groups.append([v])
                 cols.append([round(sum(g) / len(g), 1) for g in groups])
             sy["bars_nx"] = cols
+            # 和弦里二度关系的符头会被横向挪开 ~6pt，距离聚类分不开；
+            # 前端知道每小节该有几列，用原始 x 做「合并到 N 列」更靠谱。
+            sy["bars_x"] = raws
             sy.pop("nx", None)
         pages.append({"page": pno, "w": round(page.rect.width, 1), "h": round(page.rect.height, 1),
                       "systems": systems})

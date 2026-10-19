@@ -2558,18 +2558,34 @@
     st.cols = [];
     st.colsBad = 0;
     st.colsApprox = 0;
+    st.colsMerged = 0;
     if (!st.layout) return;
     var bar = 0;
     for (var p = 0; p < st.layout.pages.length; p++) {
       var pg = st.layout.pages[p];
       for (var si = 0; si < pg.systems.length; si++) {
-        var sy = pg.systems[si], per = sy.bars_nx || [];
+        var sy = pg.systems[si], per = sy.bars_nx || [], perX = sy.bars_x || [];
         for (var k = 0; k < sy.bounds.length - 1; k++) {
           if (bar >= st.bars.length) break;
           var seen = {}, notes = st.bars[bar].notes || [];
           for (var n = 0; n < notes.length; n++) seen[Math.max(0, Math.min(15, notes[n].p | 0))] = 1;
           var ps = Object.keys(seen).map(Number).sort(function (a, b) { return a - b; });
-          var seg = (per[k] || []).slice();
+          /* 优先用原始符头 x：数量多于拍位数时，反复合并最近的一对，直到正好对上 */
+          var rawX = (perX[k] || []).slice();
+          var seg = rawX.length ? rawX : (per[k] || []).slice();
+          if (seg.length > ps.length && ps.length) {
+            seg = seg.slice();
+            while (seg.length > ps.length && seg.length > 1) {
+              var bi2 = 1, bd2 = Infinity;
+              for (var t2 = 1; t2 < seg.length; t2++) {
+                var g2 = seg[t2] - seg[t2 - 1];
+                if (g2 < bd2) { bd2 = g2; bi2 = t2; }
+              }
+              seg[bi2 - 1] = (seg[bi2 - 1] + seg[bi2]) / 2;
+              seg.splice(bi2, 1);
+              st.colsMerged++;
+            }
+          }
           var good = (seg.length === ps.length);
           /* 拍位个数和谱上音符列数对不上时，按比例挑锚点（保持单调），不要整小节退回线性 */
           if (!good && seg.length && ps.length) {
@@ -2661,7 +2677,7 @@
     var pg = st.layout && st.layout.pages[st.page - 1];
     if (!pg) return;
     var ov = el('dqOverlay');
-    setPageImage(pageUrl(st.page), st.page + '|' + st.zoom);
+    setPageImage(pageUrl(st.page), st.song + '|' + st.page + '|' + st.zoom);
     ov.setAttribute('viewBox', '0 0 ' + pg.w + ' ' + pg.h);
     el('dqPageLabel').textContent = st.page + ' / ' + st.layout.pages.length;
     el('dqPrevPage').disabled = st.page <= 1;
@@ -3222,6 +3238,11 @@
       ' · ♩=' + (Math.round(st.bars[0].bpm || 0) || '—');
     el('dqWarn').hidden = true;
     el('dqScore').dataset.ready = '1';
+    var pimg = el('dqPageImg');
+    pimg.dataset.srcKey = '';
+    pimg.dataset.loaded = '';
+    pimg.removeAttribute('data-load-page');
+    preloaded = {};
     st.pageTurn = true;          /* 首次上屏直接落到居中位置 */
     sc.chasing = false;
     buildCols();
