@@ -15,7 +15,9 @@
       if (el) el.hidden = (k !== name);
     });
     Array.prototype.forEach.call(document.querySelectorAll('.navitem[data-page]'), function (b) {
-      b.classList.toggle('on', b.getAttribute('data-page') === name);
+      var on = b.getAttribute('data-page') === name;
+      b.classList.toggle('on', on);
+      if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
     });
     var t = $('crumbTitle'), sub = $('crumbSub');
     if (t) {
@@ -53,6 +55,17 @@
   setTimeout(refreshBadge, 1500);
   setInterval(refreshBadge, 15000);
 
-  /* 任务跑完时把用户带到结果（不改原有逻辑，只把页面切回来） */
+  /* 任务完成 / 打开历史谱面时，确保用户停在「新建扒谱」这一页，否则会“打开但看不见” */
+  function ensureNewPage() {
+    var lib = pageLibrary;
+    if (lib && !lib.hidden) show('new');
+  }
+  var done = viewDone;
+  if (done && window.MutationObserver) {
+    new MutationObserver(function () { if (!done.hidden) ensureNewPage(); })
+      .observe(done, { attributes: true, attributeFilter: ['hidden'] });
+  }
+
   window.dqShellShow = show;
+  window.dqEnsureNewPage = ensureNewPage;
 })();

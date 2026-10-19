@@ -809,6 +809,7 @@
   function openSong(name) {
     var card = el('dqScore');
     if (!card || !name) return;
+    if (window.dqShellShow) { try { window.dqShellShow('new'); } catch (e) {} }
     st.explicit = true;
     st.key = '';
     fetchScore(name).then(function (res) {
