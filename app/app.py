@@ -1660,11 +1660,14 @@ def diagnostics():
 
 @app.route("/api/scoremap")
 def scoremap():
-    """给"动态谱"用：每小节的起止秒 + 该小节的音符（鼓类 + 十六分格位置）。"""
+    """给冒面光标用：每小节起止秒 + 该小节音符（鼓类 + 十六分位）。
+
+    数据源直接用生成 PDF 的那份 MusicXML —— 只有同源，音符列才能和印出来的谱一一对应。
+    读不到 XML 时退回旧的 MIDI 方案。
+    """
     base = os.path.splitext(os.path.basename(request.args.get("song", "") or ""))[0]
     plan_p = os.path.join(midis_dir(), base + ".beats_plan.json")
-    mid_p = os.path.join(midis_dir(), base + ".beats.mid")
-    if not base or not os.path.isfile(plan_p) or not os.path.isfile(mid_p):
+    if not base or not os.path.isfile(plan_p):
         return jsonify({"ok": False, "error": "no beat-grid data"}), 404
     try:
         with open(plan_p, encoding="utf-8-sig") as f:
@@ -1673,33 +1676,186 @@ def scoremap():
         return jsonify({"ok": False, "error": str(e)}), 500
     bars = plan.get("bars") or []
     meter = int(plan.get("meter") or 4)
-    bpm = float(plan.get("bpm_median") or 120.0)
+
+    def pack(per_bar):
+        out = []
+        for i, b in enumerate(bars):
+            out.append({"i": i, "start": b.get("start"), "end": b.get("end"), "bpm": b.get("bpm"),
+                        "notes": sorted(per_bar.get(i, []), key=lambda x: x["p"])})
+        return jsonify({"ok": True, "base": base, "meter": meter, "source": "musicxml",
+                        "bars": out,
+                        "audio": "/api/download?kind=audio&song=%s&preview=1" % base})
+
+    xml_p = os.path.join(out_dir(), base + ".musicxml")
+    if os.path.isfile(xml_p):
+        try:
+            import xml.etree.ElementTree as ET
+            per_bar = _xml_bars_to_notes(xml_p, len(bars), meter)
+            if per_bar is not None:
+                return pack(per_bar)
+        except Exception:
+            pass
+
     try:
         import pretty_midi
-        pm = pretty_midi.PrettyMIDI(mid_p)
+        pm = pretty_midi.PrettyMIDI(os.path.join(midis_dir(), base + ".beats.mid"))
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
-    cls_of = {35: "kick", 38: "snare", 47: "tom", 42: "hihat", 49: "cymbal"}
+    cls_of = {35: "kick", 36: "kick", 38: "snare", 39: "snare", 47: "tom", 45: "tom",
+              48: "tom", 50: "tom", 42: "hihat", 44: "hihat", 46: "hihat",
+              49: "cymbal", 51: "cymbal", 57: "cymbal", 59: "cymbal"}
     cells = {}
-    bar_ticks = meter * 480
+    import bisect
+    starts = [float(b.get("start") or 0.0) for b in bars]
     for inst in pm.instruments:
         for n in inst.notes:
             c = cls_of.get(int(n.pitch))
             if not c:
                 continue
-            tick = int(round(n.start * (bpm / 60.0) * 480))
-            bi, t = divmod(tick, bar_ticks)
-            cells.setdefault(bi, []).append({"c": c, "p": int(t // 120), "v": int(n.velocity or 100)})
+            t = float(n.start)
+            bi = bisect.bisect_right(starts, t + 1e-3) - 1
+            if bi < 0 or bi >= len(bars):
+                continue
+            b0 = starts[bi]
+            b1 = float(bars[bi].get("end") or 0.0)
+            if b1 <= b0:
+                continue
+            if t < b0 - 0.03 or t >= b1 + 0.03:
+                continue
+            p = int((t - b0) / max(1e-3, b1 - b0) * 16)
+            cells.setdefault(bi, []).append({"c": c, "p": min(15, max(0, p)),
+                                             "v": int(n.velocity or 100)})
     out = []
     for i, b in enumerate(bars):
         out.append({"i": i, "start": b.get("start"), "end": b.get("end"), "bpm": b.get("bpm"),
                     "notes": sorted(cells.get(i, []), key=lambda x: x["p"])})
-    return jsonify({"ok": True, "base": base, "meter": meter, "bars": out,
+    return jsonify({"ok": True, "base": base, "meter": meter, "source": "midi", "bars": out,
                     "audio": "/api/download?kind=audio&song=%s&preview=1" % base})
 
 
+_NAME2CLS = (("bass", "kick"), ("kick", "kick"), ("snare", "snare"),
+             ("hi-hat", "hihat"), ("hihat", "hihat"), ("tom", "tom"),
+             ("crash", "cymbal"), ("ride", "cymbal"), ("cymbal", "cymbal"),
+             ("china", "cymbal"), ("splash", "cymbal"))
+
+
+def _xml_bars_to_notes(xml_path, n_bars, meter):
+    """把 MusicXML 的每个 measure 读成 [{"c": 鼓类, "p": 十六分位}]，与印出来的谱一致。"""
+    import xml.etree.ElementTree as ET
+    root = ET.parse(xml_path).getroot()
+    score_instruments = {}
+    for si in root.iter("score-instrument"):
+        sid = si.get("id") or ""
+        nm = (si.findtext("instrument-name") or "").strip().lower()
+        cls = None
+        for key, val in _NAME2CLS:
+            if key in nm:
+                cls = val
+                break
+        if cls:
+            score_instruments[sid] = cls
+    if not score_instruments:
+        return None
+    # 乐器编号 → 名字 的兜底（midi-unpitched）
+    midi_cls = {}
+    for mi in root.iter("midi-instrument"):
+        sid = mi.get("id") or ""
+        try:
+            pitch = int(mi.findtext("midi-unpitched") or 0)
+        except Exception:
+            continue
+        sid_inst = sid.rsplit("-", 1)[0]
+        for key, val in _NAME2CLS:
+            if key in "":
+                break
+        if sid_inst in score_instruments:
+            midi_cls[sid] = score_instruments[sid_inst]
+        elif pitch in (35, 36):
+            midi_cls[sid] = "kick"
+        elif pitch in (37, 38, 39, 40):
+            midi_cls[sid] = "snare"
+        elif 42 <= pitch <= 46 or pitch == 22 or pitch == 26:
+            midi_cls[sid] = "hihat"
+        elif 41 <= pitch <= 50:
+            midi_cls[sid] = "tom"
+        elif 49 <= pitch <= 59:
+            midi_cls[sid] = "cymbal"
+
+    part = None
+    for p in root.findall("part"):
+        part = p
+        break
+    if part is None:
+        return None
+    divisions = 1
+    per_bar = {}
+    for mi, measure in enumerate(part.findall("measure")):
+        cursor = 0
+        last_onset = 0
+        for el in measure:
+            tag = el.tag
+            if tag == "attributes":
+                d = el.findtext("divisions")
+                if d:
+                    try:
+                        divisions = max(1, int(float(d)))
+                    except Exception:
+                        pass
+                continue
+            if tag == "backup":
+                try:
+                    cursor -= int(float(el.findtext("duration") or 0))
+                except Exception:
+                    pass
+                continue
+            if tag == "forward":
+                try:
+                    cursor += int(float(el.findtext("duration") or 0))
+                except Exception:
+                    pass
+                continue
+            if tag != "note":
+                continue
+            dur = 0
+            try:
+                dur = int(float(el.findtext("duration") or 0))
+            except Exception:
+                dur = 0
+            is_chord = el.find("chord") is not None
+            onset = last_onset if is_chord else cursor
+            if not is_chord:
+                last_onset = onset
+                cursor += dur
+            if el.find("rest") is not None:
+                continue
+            if el.find("grace") is not None:
+                continue
+            inst_id = None
+            ine = el.find("instrument")
+            if ine is not None:
+                inst_id = ine.get("id")
+            cls = midi_cls.get(inst_id) or score_instruments.get(inst_id)
+            if not cls:
+                up = el.find("unpitched")
+                if up is not None:
+                    step = (up.findtext("display-step") or "").strip().upper()
+                    octv = (up.findtext("display-octave") or "").strip()
+                    cls = {"F": "kick", "C": "snare", "G": "hihat",
+                           "E": "tom", "A": "cymbal", "D": "tom", "B": "tom"}.get(step, "snare")
+                else:
+                    cls = "snare"
+            per_bar.setdefault(mi, []).append({"c": cls, "p": min(15, max(0, int(round(onset * 4.0 / divisions)))), "v": 100})
+    if not per_bar and n_bars:
+        return None
+    return per_bar
+
+
 def _pdf_layout(pdf_path):
-    """从 MuseScore 导出的 PDF 里读出每个系统行的横线与小节线坐标。"""
+    """从 MuseScore 导出的 PDF 里读出系统行、小节线，以及每个小节内音符列的真实 x。
+
+    为什么需要音符列坐标：MuseScore 按音符时值排版，同一小节内各拍宽度并不相等
+    （实测同一首里每个十六分位 1.5~30pt 不等），用时间线性插值会让光标越走越偏。
+    """
     import pymupdf
     doc = pymupdf.open(pdf_path)
     pages = []
@@ -1707,6 +1863,17 @@ def _pdf_layout(pdf_path):
         hl, vl = [], []
         for d in page.get_drawings():
             for it in d["items"]:
+                if it[0] == "re":
+                    # 反复记号/终止线在 PDF 里是矩形而不是线段：细高的矩形也算小节线
+                    r = it[1]
+                    w, h = abs(r.x1 - r.x0), abs(r.y1 - r.y0)
+                    if h > 8 and w <= 4.0:
+                        vl.append((round((r.x0 + r.x1) / 2.0, 1), round(min(r.y0, r.y1), 1),
+                                   round(max(r.y0, r.y1), 1)))
+                    elif w > 40 and h <= 4.0:
+                        hl.append((round((r.y0 + r.y1) / 2.0, 1), round(min(r.x0, r.x1), 1),
+                                   round(max(r.x0, r.x1), 1)))
+                    continue
                 if it[0] != "l":
                     continue
                 p1, p2 = it[1], it[2]
@@ -1714,17 +1881,6 @@ def _pdf_layout(pdf_path):
                     hl.append((round(p1.y, 1), round(min(p1.x, p2.x), 1), round(max(p1.x, p2.x), 1)))
                 elif abs(p1.x - p2.x) < 0.6:
                     vl.append((round(p1.x, 1), round(min(p1.y, p2.y), 1), round(max(p1.y, p2.y), 1)))
-        heads = []
-        try:
-            for blk in page.get_text("rawdict")["blocks"]:
-                for line in blk.get("lines", []):
-                    for span in line["spans"]:
-                        for ch in span["chars"]:
-                            o = ord(ch["c"][0])
-                            if 0xE0A0 <= o <= 0xE0FF:      # SMuFL 音符头区间
-                                heads.append(ch)
-        except Exception:
-            heads = []
         ys = sorted({h[0] for h in hl})
         # 五线一组
         syss, i = [], 0
@@ -1748,11 +1904,48 @@ def _pdf_layout(pdf_path):
             bounds = sorted(set(round(b, 1) for b in bounds))
             if x1 > bounds[-1] + 1:
                 bounds.append(round(x1, 1))
-            # 音符头（SMuFL 私有区字形）的 x：一列（同一拍位）可能多个鼓，聚类后即该列的位置
-            nx = sorted({round(ch["origin"][0], 1) for ch in heads
-                         if abs(ch["origin"][1] - top) < (bot - top) + 12})
             systems.append({"top": top, "bottom": bot, "x0": round(x0, 1), "x1": round(x1, 1),
-                            "bounds": bounds, "nx": nx})
+                            "bounds": bounds})
+        # 音符头字形（SMuFL 私有区 U+E0A0–E0FF）：每个字形按 y 归到最近的一行
+        heads = []
+        try:
+            for blk in page.get_text("rawdict")["blocks"]:
+                for line in blk.get("lines", []):
+                    for span in line["spans"]:
+                        for ch in span["chars"]:
+                            if ch["c"] and 0xE0A0 <= ord(ch["c"][0]) <= 0xE0FF:
+                                heads.append((ch["origin"][0], ch["origin"][1]))
+        except Exception:
+            heads = []
+        mids = [(sy["top"] + sy["bottom"]) / 2.0 for sy in systems]
+        # 每个字形先归到最近的一行，再按小节线区间归到小节，最后把同一拍位的多个鼓聚类成一列
+        buckets = [[] for _ in systems]
+        for hx, hy in heads:
+            if not mids:
+                break
+            best = min(range(len(mids)), key=lambda k: abs(hy - mids[k]))
+            if abs(hy - mids[best]) <= 34:          # 排掉页眉/标题/力度等噪声
+                buckets[best].append(hx)
+        for sy, mine in zip(systems, buckets):
+            bnd = sy["bounds"]
+            per = [[] for _ in range(max(0, len(bnd) - 1))]
+            for hx in mine:
+                for k in range(len(bnd) - 1):
+                    if bnd[k] - 1.0 <= hx <= bnd[k + 1] + 1.0:
+                        per[k].append(hx)
+                        break
+            cols = []
+            for xs2 in per:
+                xs2.sort()
+                groups = []
+                for v in xs2:
+                    if groups and v - groups[-1][-1] <= 3.2:
+                        groups[-1].append(v)
+                    else:
+                        groups.append([v])
+                cols.append([round(sum(g) / len(g), 1) for g in groups])
+            sy["bars_nx"] = cols
+            sy.pop("nx", None)
         pages.append({"page": pno, "w": round(page.rect.width, 1), "h": round(page.rect.height, 1),
                       "systems": systems})
     return pages

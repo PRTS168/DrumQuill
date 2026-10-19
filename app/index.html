@@ -2549,20 +2549,36 @@
      所以不能按时间线性铺满小节，必须用谱面上音符列的真实 x。 */
   function buildCols() {
     st.cols = [];
+    st.colsBad = 0;
+    st.colsApprox = 0;
     if (!st.layout) return;
     var bar = 0;
     for (var p = 0; p < st.layout.pages.length; p++) {
       var pg = st.layout.pages[p];
       for (var si = 0; si < pg.systems.length; si++) {
-        var sy = pg.systems[si], nx = sy.nx || [], i = 0;
+        var sy = pg.systems[si], per = sy.bars_nx || [];
         for (var k = 0; k < sy.bounds.length - 1; k++) {
           if (bar >= st.bars.length) break;
           var seen = {}, notes = st.bars[bar].notes || [];
           for (var n = 0; n < notes.length; n++) seen[Math.max(0, Math.min(15, notes[n].p | 0))] = 1;
           var ps = Object.keys(seen).map(Number).sort(function (a, b) { return a - b; });
-          var seg = nx.slice(i, i + ps.length);
-          i += ps.length;
-          st.cols[bar] = (seg.length === ps.length && ps.length) ? { ps: ps, xs: seg } : null;
+          var seg = (per[k] || []).slice();
+          var good = (seg.length === ps.length);
+          /* 拍位个数和谱上音符列数对不上时，按比例挑锚点（保持单调），不要整小节退回线性 */
+          if (!good && seg.length && ps.length) {
+            var mapped = [];
+            for (var q2 = 0; q2 < ps.length; q2++) {
+              var j2 = ps.length > 1 ? Math.round(q2 * (seg.length - 1) / (ps.length - 1)) : 0;
+              mapped.push(seg[Math.min(seg.length - 1, j2)]);
+            }
+            seg = mapped;
+            st.colsApprox++;
+          }
+          for (var q = 1; q < seg.length; q++) {
+            if (seg[q] <= seg[q - 1]) seg[q] = seg[q - 1] + 0.5;      /* 强制单调 */
+          }
+          st.cols[bar] = ps.length ? { ps: ps, xs: seg } : null;
+          if (!good) st.colsBad++;
           bar++;
         }
       }
@@ -2628,6 +2644,32 @@
     }
   }
 
+  var disp = { x: null, bar: -1, last: 0 };
+  /* 谱面列间距能差到 4 倍，若直接按列插值，光标会忽快忽慢地抽。
+     这里给显示位置加一个「只能往前走 + 限制瞬时速度」的平滑。 */
+  function smoothX(bi, target, g) {
+    var now = (window.performance && performance.now) ? performance.now() : Date.now();
+    var dt = disp.last ? Math.min(0.12, (now - disp.last) / 1000) : 0.016;
+    disp.last = now;
+    var w = g.x1 - g.x0;
+    if (!st.playing || disp.x == null || disp.bar !== bi || Math.abs(target - disp.x) > w * 0.5) {
+      disp.bar = bi;
+      disp.x = target;
+      return target;
+    }
+    var bar = st.bars[bi];
+    var barDur = Math.max(0.25, (bar.end || bar.start + 2) - bar.start);
+    var vAvg = w / barDur;                       /* 平均速度 pt/s */
+    var need = target - disp.x;
+    if (need > 0) {
+      var step = Math.min(need, Math.max(vAvg * 2.4 * dt, need * Math.min(1, 8 * dt)));
+      disp.x += step;
+    } else if (need < -w * 0.5) {
+      disp.x = target;
+    }
+    return disp.x;
+  }
+
   function paintPdf() {
     var ov = el('dqOverlay');
     if (!ov || !st.layout) return;
@@ -2652,8 +2694,9 @@
     var bi = Math.min(3, Math.floor(hit.frac * 4));
     var bx = xAtP(hit.i, bi * 4);
     var bx2 = xAtP(hit.i, bi * 4 + 4);
-    var x = xAtP(hit.i, hit.frac * 16);
-    if (bx == null || x == null) return;
+    var xTarget = xAtP(hit.i, hit.frac * 16);
+    if (bx == null || xTarget == null) return;
+    var x = smoothX(hit.i, xTarget, g);
     if (bx2 == null) bx2 = bx + (g.x1 - g.x0) / 4;
     var beat = Math.max(8, bx2 - bx);
     ov.innerHTML =
@@ -2864,6 +2907,11 @@
     el('dqWarn').hidden = true;
     el('dqScore').dataset.ready = '1';
     buildCols();
+    if (st.layout && st.colsBad > Math.max(3, st.bars.length * 0.35)) {
+      el('dqWarn').textContent = '⚠ 这份 PDF 的音符列与谱面数据不完全一致，播放头在这首里只能近似对齐' +
+        '（其他歌不受影响）。重新扒一次这首歌通常就好了。';
+      el('dqWarn').hidden = false;
+    }
     if (st.layout) { renderPdf(); paintPdf(); } else {
       el('dqOverlay').innerHTML = '';
     }
