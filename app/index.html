@@ -2628,17 +2628,20 @@
     var img = el('dqPageImg');
     if (img.dataset.srcKey === key && img.dataset.loaded === '1') return;
     img.dataset.srcKey = key;
+    img.dataset.loaded = '';           /* 新页还没到位：这段时间不要拿旧图的尺寸算位置 */
     var pre = new Image();
     pre.onload = function () {
       if (img.dataset.srcKey !== key) return;      /* 期间又换了页，丢掉这次结果 */
       img.setAttribute('src', src);
       img.dataset.loaded = '1';
+      img.dataset.loadPage = String(st.page);
       paintPdf();
     };
     pre.onerror = function () {
       if (img.dataset.srcKey !== key) return;
       img.setAttribute('src', src);
       img.dataset.loaded = '1';
+      img.dataset.loadPage = String(st.page);
     };
     pre.src = src;
   }
@@ -2708,9 +2711,11 @@
       if (Math.abs(d) < 0.7) { sc.goal = null; sc.raf = 0; sc.busy = false; return; }
       var delta = d * 0.13;
       if (Math.abs(delta) > cap) delta = (delta > 0 ? 1 : -1) * cap;
-      if (Math.abs(delta) < 0.4) delta = (delta > 0 ? 0.4 : -0.4);
+      /* 取整：浏览器 scrollY 是整数，亚像素步进会造成 ±1px 抖动 */
+      var stepPx = Math.round(delta);
+      if (stepPx === 0) stepPx = (d > 0 ? 1 : -1);
       sc.busy = true;
-      window.scrollBy(0, delta);
+      window.scrollBy(0, stepPx);
       sc.raf = requestAnimationFrame(step);
     };
     sc.raf = requestAnimationFrame(step);
@@ -2727,24 +2732,26 @@
     return { top: top, height: (g.bottom - g.top) * k, k: k };
   }
 
-  var lastFollow = 0;
-  /* 柔和跟随：行还在舒适区就不动；跑出去就把目标设成「贴到吸顶条下方」 */
+  /* 柔和跟随：每帧都按「当前行」重算，行一进舒适区就停 —— 目标不残留，才不会来回滚 */
   function scrollToSystem(g, force) {
-    if (!g || explicitStop()) return;
+    if (!g) return;
+    var img = el('dqPageImg');
+    if (!img || img.dataset.loadPage !== String(st.page)) return;
     var dr = systemDocRect(g);
     if (!dr) return;
     var now = (window.performance && performance.now) ? performance.now() : Date.now();
     if (sc.userHold && now < sc.userHold) return;      /* 用户刚自己滚过，别抢 */
-    if (!force && now - lastFollow < 120) return;
-    lastFollow = now;
     var safeTop = stickyOffset() + 22;
-    var safeBottom = window.innerHeight - 96;
+    var safeBottom = window.innerHeight - 92;
+    var zone = Math.max(60, safeBottom - safeTop);
     var y = dr.top - window.scrollY;
-    var needScroll = force || (y < safeTop) || (y + dr.height > safeBottom);
-    if (!needScroll) return;
-    easeScrollTo(dr.top - safeTop - 6, force ? 26 : 12);
+    var fits = dr.height <= zone;
+    var inside = fits ? (y >= safeTop && y + dr.height <= safeBottom)
+                      : (Math.abs(y - safeTop) <= 3);
+    if (inside) { if (sc.raf) stopScrollAnim(); return; }   /* 到位即停，别继续滑到旧目标 */
+    var goal = dr.top - safeTop - 6;
+    easeScrollTo(goal, force ? 26 : 12);
   }
-  function explicitStop() { return false; }
 
   /* 用户主动滚动/滚轮/触屏时，立刻停掉我们的动画，并让出 1.2 秒 */
   function watchUserScroll() {
@@ -2762,11 +2769,37 @@
     });
   }
 
+  /* 光标平滑：只能往前走 + 限制瞬时速度（列间距最大差 4 倍，直插会忽快忽慢） */
+  function smoothX(bi, target, g) {
+    if (!isFinite(target)) { disp.x = null; return null; }
+    var now = (window.performance && performance.now) ? performance.now() : Date.now();
+    var dt = disp.last ? Math.min(0.12, (now - disp.last) / 1000) : 0.016;
+    disp.last = now;
+    var w = g.x1 - g.x0;
+    if (!st.playing || disp.x == null || disp.bar !== bi || Math.abs(target - disp.x) > w * 0.5) {
+      disp.bar = bi;
+      disp.x = target;
+      return target;
+    }
+    var bar = st.bars[bi];
+    var barDur = Math.max(0.25, (bar.end || bar.start + 2) - bar.start);
+    var vAvg = w / barDur;
+    var need = target - disp.x;
+    if (need > 0) {
+      var step = Math.min(need, Math.max(vAvg * 2.4 * dt, need * Math.min(1, 8 * dt)));
+      disp.x += step;
+    } else if (need < -w * 0.5) {
+      disp.x = target;
+    }
+    return disp.x;
+  }
+
   function paintPdf() {
     var ov = el('dqOverlay');
     if (!ov || !st.layout) return;
     var hit = barAt(time());
     if (!hit) { ov.innerHTML = ''; return; }
+    st.curBar = hit.i;
     var g = barGeo(hit.i);
     if (!g) { ov.innerHTML = ''; return; }
     if (g.page !== st.page) {
@@ -2774,13 +2807,21 @@
       var held = st.pageHold && ((window.performance ? performance.now() : Date.now()) < st.pageHold);
       if (!held) {
         st.page = g.page;
+        st.pageTurn = true;      /* 翻页后直接落位，不要倒着滑回去 */
         renderPdf();
       }
       return;                     /* 等新页的图就绪后 setPageImage 会再画一次 */
     }
-    if (el('dqPageImg').dataset.loaded !== '1') return;
-    /* 播放中自动跟到底部之外的系统行 */
-    if (st.playing) scrollToSystem(g, false);
+    var pageImg = el('dqPageImg');
+    if (pageImg.dataset.loaded !== '1') return;
+    if (pageImg.dataset.loadPage !== String(st.page)) return;   /* 图还是上一页，别拿它算坐标 */
+    if (st.pageTurn) {
+      st.pageTurn = false;
+      stopScrollAnim();
+      snapFollow();                /* 换页：一次落位，避免倒着滑一屏 */
+    } else if (st.playing) {
+      scrollToSystem(g, false);    /* 播放中柔和跟随 */
+    }
     var pg = st.layout.pages[st.page - 1];
     var b = st.bars[hit.i];
     if (b) {
@@ -2861,6 +2902,27 @@
     disp.x = null;
     disp.last = 0;
     paint();
+    snapFollow();
+  }
+
+  /* 跳跃式定位：直接落到目标位置（平滑只用于自动跟随） */
+  function snapFollow() {
+    var hit = barAt(time());
+    if (!hit) return;
+    var g = barGeo(hit.i);
+    if (!g || g.page !== st.page) return;
+    var img = el('dqPageImg');
+    if (!img || img.dataset.loadPage !== String(st.page)) return;
+    var dr = systemDocRect(g);
+    if (!dr) return;
+    var safeTop = stickyOffset() + 22;
+    var safeBottom = window.innerHeight - 96;
+    var y = dr.top - window.scrollY;
+    if (y < safeTop || y + dr.height > safeBottom) {
+      stopScrollAnim();
+      var goal = Math.max(0, Math.min(dr.top - safeTop - 6, maxScroll()));
+      window.scrollTo(0, goal);
+    }
   }
   /* 点小节：落到最近的音符列，而不是小节开头（更符合「我想听这里」的直觉） */
   function seekInBar(idx, px) {
@@ -3148,6 +3210,7 @@
   }
 
   window.dqOpen = openSong;
+  window.__dq = { st: st, sc: sc, disp: disp, sys: systemDocRect, sticky: stickyOffset };
 
   setInterval(load, 2500);
   setTimeout(load, 500);
