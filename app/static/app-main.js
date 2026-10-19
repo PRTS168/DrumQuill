@@ -128,7 +128,7 @@
       chip.innerHTML = '<span class="dot2"></span>检测 GPU…';
     }else if(avail && want !== 'cpu'){
       chip.className = 'chip gpu';
-      chip.innerHTML = '<span class="dot2"></span><b>⚡ '+esc(gpu.name.replace(/^NVIDIA\s+/,''))+'</b> · '+Math.round(gpu.vram_mb/1024)+'GB';
+      chip.innerHTML = '<span class="dot2"></span><b>'+esc(gpu.name.replace(/^NVIDIA\s+/,''))+'</b> · '+Math.round(gpu.vram_mb/1024)+'GB';
       chip.title = '分离使用 '+gpu.name+'（'+gpu.vram_mb+' MB 显存）';
     }else if(avail){
       chip.className = 'chip';
@@ -607,10 +607,19 @@
   window.dqLoadHistory = loadHistory;
 
   function loadHistory(){
+    var box0 = $('#history');
+    if (box0 && !box0.querySelector('.hrow')) {
+      box0.innerHTML = '<div class="skel-row"><div class="skel skel-thumb"></div>' +
+        '<div style="flex:1"><div class="skel skel-line" style="width:38%"></div>' +
+        '<div class="skel skel-line" style="width:22%;margin-top:6px"></div></div></div>' +
+        '<div class="skel-row"><div class="skel skel-thumb"></div>' +
+        '<div style="flex:1"><div class="skel skel-line" style="width:30%"></div>' +
+        '<div class="skel skel-line" style="width:18%;margin-top:6px"></div></div></div>';
+    }
     fetch('/api/history?t=' + Date.now(), { cache: 'no-store' })
       .then(function(r){ return r.json(); }).then(function(items){
       var box = $('#history');
-      if(!items || !items.length){ box.innerHTML = '<div class="empty">还没有产物。扒第一首试试。</div>'; return; }
+      if(!items || !items.length){ box.innerHTML = '<div class="empty">还没有扒过任何曲子<br><span class="hint">去「新建扒谱」拖一首歌进来</span></div>'; return; }
       var html = '';
       items.forEach(function(it){
         var base = it.base || it.name.replace(/_鼓谱\.pdf$/, '');
@@ -766,7 +775,9 @@
   /* ================= 鼓谱 PDF 预览（服务端渲染成图） ================= */
   var pv = { base: null, page: 1, pages: 0 };
 
+  var _pdfPrevFocus = null;
   function openPdf(name){
+    _pdfPrevFocus = document.activeElement;
     var base = stripExt(name);
     pv.base = base; pv.page = 1;
     fetch('/api/pdf/info?song='+encodeURIComponent(base)).then(function(r){ return r.json(); }).then(function(j){
@@ -785,6 +796,7 @@
         }).catch(function(e){ toast('打不开：'+e, true); });
       };
       show($('#pdfModal'));
+    setTimeout(function(){ var c = $('#pdfClose'); if (c) c.focus(); }, 30);
       renderPvPage();
     }).catch(function(e){ toast('读取鼓谱失败：'+e, true); });
   }
@@ -1115,7 +1127,7 @@
   /* ---------------- 安装向导 ---------------- */
   function openSetup(manual, resume){
     if(!setupInfo){
-      show($('#setupModal'));
+      if(window.dqOpenSetup) window.dqOpenSetup(); else show($('#setupModal'));
       $('#setupMsg').textContent = '正在读取组件状态…';
       loadSetupStatus(function(){ openSetup(manual, resume); });
       return;
@@ -1455,8 +1467,12 @@
     if(e.key === 'ArrowRight'){ pvGo(1); }
   });
 
-  $('#settingsBtn').addEventListener('click', function(){ show($('#setModal')); loadModels(); });
-  $('#footSettings').addEventListener('click', function(e){ e.preventDefault(); show($('#setModal')); loadModels(); });
+  function openSettings(){
+    if(window.dqOpenSettings) window.dqOpenSettings(); else show($('#setModal'));
+    loadModels();
+  }
+  $('#settingsBtn').addEventListener('click', openSettings);
+  $('#footSettings').addEventListener('click', function(e){ e.preventDefault(); openSettings(); });
   $('#footOpenDocs').addEventListener('click', function(e){ e.preventDefault(); toast('使用说明：程序目录下的 使用说明.txt / README.md'); });
   $('#saveCfgBtn').addEventListener('click', saveSettings);
   $('#resetCfgBtn').addEventListener('click', function(){

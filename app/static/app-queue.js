@@ -8,6 +8,14 @@
     if (text != null) d.textContent = text;
     return d;
   }
+  function toast(msg, bad) {
+    var t = document.getElementById('toast');
+    if (!t) { if (window.console) console.log('[queue]', msg); return; }
+    t.textContent = msg;
+    t.className = 'toast show' + (bad ? ' err' : '');
+    clearTimeout(t.__t);
+    t.__t = setTimeout(function () { t.className = 'toast'; }, 2600);
+  }
   function fmtETA(sec) {
     if (sec == null) return '';
     var m = Math.round(sec / 60);
@@ -19,8 +27,24 @@
                               body: JSON.stringify(body)} : {}).then(function (r) { return r.json(); });
   }
 
+  /* 新建页的「加入队列」 */
+  function bindAddFromPick() {
+    var b = document.getElementById('addQueueBtn');
+    if (!b || b.dataset.b) return;
+    b.dataset.b = '1';
+    b.onclick = function () {
+      var n = (document.getElementById('pickedName') || {}).textContent || '';
+      if (!n) { toast('先选一首歌', true); return; }
+      api('/api/queue', {action: 'add', songs: [n]}).then(function () {
+        refresh();
+        if (window.dqShellShow) window.dqShellShow('queue');
+      });
+    };
+  }
+
   /* ---------- 队列卡片 ---------- */
   function queueCard() {
+    bindAddFromPick();
     var box = document.getElementById('dqQueue');
     if (!box) {
       var anchor = document.getElementById('pickedBlock');
@@ -31,30 +55,37 @@
       anchor.parentNode.insertBefore(box, anchor.nextSibling);
     }
     var q = (st && st.queue) || {items: [], total: 0, done: 0, paused: false};
-    var html = '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
-      '<b>批量队列</b><span class="d">' + q.done + ' / ' + q.total + ' 已完成</span>' +
-      '<span style="flex:1"></span>' +
+    var html = '<div class="cardhead" style="margin-bottom:var(--s3)">' +
+      '<div><h1 style="font-size:15px">' + (q.paused ? '已暂停' : '进行中') + '</h1>' +
+      '<div class="metaline"><span class="k">进度</span><span class="v">' + q.done + ' / ' + q.total +
+      '</span></div></div>' +
+      '<div class="right" style="display:flex;gap:8px;align-items:center">' +
       '<button class="btn ghost sm" id="dqAdd">把当前选中加入队列</button>' +
       '<button class="btn ghost sm" id="dqPause">' + (q.paused ? '继续队列' : '暂停队列') + '</button>' +
-      '<button class="btn ghost sm" id="dqClear">清空</button></div>';
+      '<button class="btn ghost sm" id="dqClear">清空</button></div></div>';
     if (q.items.length) {
-      html += '<div style="margin-top:8px">' + q.items.map(function (it) {
-        var tag = it.state === 'done' ? '✓ 完成' : it.state === 'running' ? '▶ 进行中'
-                : it.state === 'failed' ? '✕ 失败' : '… 等待';
-        return '<div style="display:flex;gap:8px;align-items:center;padding:2px 0">' +
-          '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + it.song + '</span>' +
-          '<span class="d">' + tag + '</span>' +
+      html += '<div class="qlist">' + q.items.map(function (it) {
+        var cls = it.state === 'done' ? 'ok' : it.state === 'running' ? 'req'
+                : it.state === 'failed' ? 'miss' : 'opt';
+        var tag = it.state === 'done' ? '完成' : it.state === 'running' ? '进行中'
+                : it.state === 'failed' ? '失败' : '等待';
+        return '<div class="qrow">' +
+          '<span class="qname">' + it.song + '</span>' +
+          '<span class="badge ' + cls + '">' + tag + '</span>' +
           '<button class="btn ghost sm" data-dqrm="' + it.song + '">移除</button></div>';
       }).join('') + '</div>';
     } else {
-      html += '<div class="d" style="margin-top:6px">队列为空。把歌加进来，跑完一首会自动接下一首。</div>';
+      html += '<div class="empty">队列为空<br><span class="hint">在「新建扒谱」里选好歌，点「加入队列」就会排到这里</span></div>';
     }
     box.innerHTML = html;
     var add = document.getElementById('dqAdd');
     if (add) add.onclick = function () {
       var n = (document.getElementById('pickedName') || {}).textContent || '';
       if (!n) { toast('先在下面选一首歌', true); return; }
-      api('/api/queue', {action: 'add', songs: [n]}).then(function () { refresh(); });
+      api('/api/queue', {action: 'add', songs: [n]}).then(function () {
+        refresh();
+        if (window.dqShellShow) window.dqShellShow('queue');
+      });
     };
     var pa = document.getElementById('dqPause');
     if (pa) pa.onclick = function () { api('/api/queue', {action: q.paused ? 'resume' : 'pause'}).then(refresh); };
