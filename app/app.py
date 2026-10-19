@@ -162,7 +162,8 @@ def gpu_snapshot():
         return dict(GPU_STATE)
 
 
-app = Flask(__name__, template_folder=APP_DIR, static_folder=APP_DIR, static_url_path="/static")
+app = Flask(__name__, template_folder=APP_DIR,
+              static_folder=os.path.join(APP_DIR, "static"), static_url_path="/static")
 # index.html 改动即时生效（开发/维护友好；本地小文件无性能负担）
 app.config["TEMPLATES_AUTO_RELOAD"] = True
 os.makedirs(APP_DIR, exist_ok=True)
