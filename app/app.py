@@ -1764,6 +1764,13 @@ def api_source():
     """原曲音频（动态谱跟着原曲走：拍点就是从原曲跟出来的，时间轴一致）。"""
     name = os.path.basename(request.args.get("song", "") or "")
     path = os.path.join(songs_dir(), name)
+    # 历史列表给的常常是不带扩展名的基名：按常见音频后缀补全
+    if name and not os.path.isfile(path) and not os.path.splitext(name)[1]:
+        for ext in (".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac"):
+            cand = os.path.join(songs_dir(), name + ext)
+            if os.path.isfile(cand):
+                path = cand
+                break
     if not name or not os.path.isfile(path):
         return jsonify({"ok": False, "error": "not found"}), 404
     return send_file(path, conditional=True)

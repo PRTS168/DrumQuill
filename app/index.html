@@ -445,6 +445,10 @@
   .phcol{position:absolute;border:2px solid #22c55e;background:rgba(34,197,94,.13);border-radius:9px;
     pointer-events:none;box-sizing:border-box;z-index:2}
   .phline{position:absolute;width:1.5px;background:rgba(34,197,94,.9);pointer-events:none;z-index:1}
+  #dqScore[data-explicit="1"] .prod,
+  #dqScore[data-explicit="1"] .logwrap{display:none}
+  .sh-hist{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:11.5px;color:var(--ink-3)}
+  .sh-hist b{color:var(--accent-ink);font-family:var(--mono);font-weight:600}
   .vmseg{height:30px}
   .vmseg button{font-size:12px;padding:0 12px}
 
@@ -602,12 +606,16 @@
     <div class="score-head">
       <div>
         <h1>鼓谱</h1>
-        <div class="sh-sub" id="dqSub">动态谱 · 绿色播放头跟着音乐走 · 点任意位置跳转</div>
+        <div class="sh-sub" id="dqSub">与打印出来那张 PDF 完全一致 · 绿色播放头跟着音乐走 · 点小节跳转</div>
+        <div class="sh-hist" id="dqHist" hidden>
+          <span>正在看历史：<b id="dqHistName"></b></span>
+          <button class="btn ghost sm" id="dqHistBack">回到本次结果</button>
+        </div>
       </div>
       <div class="sh-tools">
         <div class="seg vmseg" id="dqViewMode">
-          <button data-view="tab" class="on">动态谱</button>
-          <button data-view="pdf">打印版</button>
+          <button data-view="pdf" class="on">PDF 谱</button>
+          <button data-view="tab">简化谱</button>
         </div>
         <span class="pgnav" id="dqPdfTools" hidden>
           <button class="btn ghost sm" id="dqPrevPage" title="上一页（←）">‹</button>
@@ -923,9 +931,12 @@
       var el = $(map[k]);
       if(k === name) show(el); else hide(el);
     });
-    /* 谱面工作台只在「完成」且数据已就绪时出现 */
+    /* 谱面工作台：本次完成后显示；从「最近产物」打开过的那首也一直留着 */
     var sc = document.getElementById('dqScore');
-    if(sc) sc.hidden = (name !== 'done' || sc.dataset.ready !== '1');
+    if(sc){
+      var ok = sc.dataset.ready === '1' && (name === 'done' || sc.dataset.explicit === '1');
+      sc.hidden = (name === 'run') || !ok;
+    }
   }
 
   /* ================= 设备 ================= */
@@ -1433,7 +1444,8 @@
           '<div class="hname"><div class="nm">'+sb+'</div>' +
           '<div class="hm">'+esc(it.time)+' · '+fmtSize(it.size)+'</div></div>' +
           '<div class="hops">' +
-          (hasPdf ? '<button class="btn sm" data-pdf="'+sb+'">查看鼓谱</button>' : '') +
+          (hasPdf ? '<button class="btn sm" data-dyn="'+sb+'">动态谱</button>' +
+                    '<button class="btn ghost sm" data-pdf="'+sb+'">PDF</button>' : '') +
           '<button class="btn ghost sm" data-play="'+sb+'">▶ 试听</button>' +
           '<button class="btn ghost sm" data-artifacts="'+sb+'">产物…</button>' +
           '<button class="btn ghost sm" data-delsong="'+sb+'" title="删除这首歌的全部产物（源音频保留）">删除</button>' +
@@ -1444,7 +1456,9 @@
       Array.prototype.forEach.call(box.querySelectorAll('[data-thumb]'), function(img){
         var b = img.dataset.thumb;
         img.onerror = function(){ img.dataset.empty = '1'; };
-        img.onclick = function(){ openPdf(b); };
+        img.onclick = function(){
+          if(window.dqOpen) window.dqOpen(b); else openPdf(b);
+        };
         img.src = '/api/pdf/page?song='+encodeURIComponent(b)+'&page=1&dpi=40';
       });
     }).catch(function(){});
@@ -2203,6 +2217,12 @@
   document.addEventListener('click', function(e){
     var playBtn = e.target.closest('[data-play]');
     if(playBtn){ playHistory(playBtn.dataset.play, playBtn); return; }
+    var dynBtn = e.target.closest('[data-dyn]');
+    if(dynBtn){
+      if(window.dqOpen) window.dqOpen(dynBtn.dataset.dyn);
+      else openPdf(dynBtn.dataset.dyn);
+      return;
+    }
     var pdfBtn = e.target.closest('[data-pdf]');
     if(pdfBtn){ openPdf(pdfBtn.dataset.pdf); return; }
     var artBtn = e.target.closest('[data-artifacts]');
@@ -2501,7 +2521,7 @@
   var el = function (id) { return document.getElementById(id); };
   var st = {
     song: '', bars: [], layout: null, page: 1, zoom: 'fit', src: 'mix', key: '',
-    playing: false, view: 'tab', bpr: 2, gutter: 34, barW: 0, rows: 0,
+    playing: false, view: 'pdf', bpr: 2, gutter: 34, barW: 0, rows: 0,
     hit: null, lastRow: -1
   };
   var DPI = { fit: 150, page: 200, hd: 200, big: 320 };
@@ -2612,11 +2632,7 @@
           (LINE_BOTTOM + 5) + '" stroke="#a7b2ba" stroke-width="1.2"/>');
         s.push('<text x="' + (bx + 2) + '" y="10" font-size="10.5" fill="#9aa4ac" font-family="Consolas,\'Cascadia Mono\',monospace">' +
           (bi + 1) + '</text>');
-        var bpm = Math.round(st.bars[bi].bpm || 0);
-        if (bpm && Math.abs(bpm - lastBpm) >= 4) {
-          lastBpm = bpm;
-          s.push('<text x="' + (bx + 20) + '" y="10" font-size="10.5" fill="#7c8790" font-family="Consolas,monospace">♩=' + bpm + '</text>');
-        }
+
         s.push(notesSVG(st.bars[bi], bx, st.barW));
       }
       var endX = st.gutter + st.barW * Math.min(st.bpr, st.bars.length - i0);
@@ -2717,14 +2733,29 @@
     if (!hit) { ov.innerHTML = ''; return; }
     var g = barGeo(hit.i);
     if (!g) { ov.innerHTML = ''; return; }
-    var pad = (g.bottom - g.top) * 0.16;
+    var pg = st.layout.pages[st.page - 1];
+    var b = st.bars[hit.i];
+    if (b) {
+      el('dqBarNo').textContent = hit.i + 1;
+      el('dqBarTime').textContent = ' · ' + mmss(b.start) + '–' + mmss(b.end || b.start + 2);
+    }
+    var pad = (g.bottom - g.top) * 0.24;
     var h = g.bottom - g.top + pad * 2, y = g.top - pad;
+    var beat = (g.x1 - g.x0) / 4;                      /* 一小节按 4 拍切 */
+    var bi = Math.min(3, Math.floor(hit.frac * 4));
+    var bx = g.x0 + bi * beat;
     var x = g.x0 + (g.x1 - g.x0) * hit.frac;
     ov.innerHTML =
+      /* 当前系统行：整行极淡底 */
+      '<rect x="24" y="' + y + '" width="' + (pg.w - 48) + '" height="' + h + '" fill="rgba(34,197,94,0.05)"/>' +
+      /* 当前小节 */
       '<rect x="' + g.x0 + '" y="' + y + '" width="' + (g.x1 - g.x0) + '" height="' + h + '" fill="rgba(34,197,94,0.10)"/>' +
-      '<rect x="' + x.toFixed(1) + '" y="' + y + '" width="2.6" height="' + h + '" fill="#22c55e"/>' +
-      '<polygon points="' + x.toFixed(1) + ',' + y + ' ' + (x - 4).toFixed(1) + ',' + (y - 7) + ' ' +
-      (x + 4).toFixed(1) + ',' + (y - 7) + '" fill="#22c55e"/>';
+      /* 当前那一拍：明显的绿柱 */
+      '<rect x="' + bx.toFixed(1) + '" y="' + y + '" width="' + beat.toFixed(1) + '" height="' + h + '" fill="rgba(34,197,94,0.26)"/>' +
+      /* 精确位置：细亮线 + 顶部小三角 */
+      '<rect x="' + (x - 0.8).toFixed(1) + '" y="' + y + '" width="1.6" height="' + h + '" fill="#16a34a"/>' +
+      '<polygon points="' + x.toFixed(1) + ',' + y + ' ' + (x - 4.5).toFixed(1) + ',' + (y - 7) + ' ' +
+      (x + 4.5).toFixed(1) + ',' + (y - 7) + '" fill="#16a34a"/>';
   }
 
   /* ---------- 统一刷新 ---------- */
@@ -2815,8 +2846,8 @@
     el('dqPaper').hidden = isTab;
     el('dqPdfTools').hidden = isTab;
     el('dqSub').textContent = isTab
-      ? '动态谱 · 绿色播放头跟着音乐走 · 点任意位置跳转'
-      : '打印版 PDF · 与导出文件完全一致 · 点小节跳转';
+      ? '简化谱 · 只看鼓点位置（导出请用 PDF 谱）'
+      : '与打印出来那张 PDF 完全一致 · 绿色播放头跟着音乐走 · 点小节跳转';
     Array.prototype.forEach.call(document.querySelectorAll('#dqViewMode button'), function (b) {
       b.classList.toggle('on', b.dataset.view === v);
     });
@@ -2872,6 +2903,8 @@
     }
     var play = el('dqPlay');
     if (play && !play.dataset.b) { play.dataset.b = '1'; play.onclick = togglePlay; }
+    var back = el('dqHistBack');
+    if (back) back.onclick = function () { backToJob(); };
 
     Array.prototype.forEach.call(document.querySelectorAll('#dqViewMode button'), function (b) {
       b.onclick = function () { setView(b.dataset.view); };
@@ -2943,7 +2976,40 @@
   }
 
   /* ---------- 数据 ---------- */
+  function fetchScore(name) {
+    return Promise.all([
+      fetch('/api/scoremap?song=' + encodeURIComponent(name)).then(function (r) { return r.ok ? r.json() : null; }),
+      fetch('/api/scorelayout?song=' + encodeURIComponent(name)).then(function (r) { return r.ok ? r.json() : null; })
+    ]);
+  }
+
+  /* name: 用于取音频的歌名（带不带扩展名都行）；label: 展示用 */
+  function applyScore(sm, lo, name) {
+    if (!sm || !sm.ok || !(sm.bars || []).length) return false;
+    st.song = name;
+    st.bars = sm.bars || [];
+    st.layout = (lo && lo.ok) ? lo : null;
+    st.page = 1; st.rows = 0; st.lastRow = -1;
+    var mix = el('dqAudio');
+    var want = '/api/source?song=' + encodeURIComponent(name);
+    if (mix.getAttribute('src') !== want) mix.setAttribute('src', want);
+    bindAudio(mix);
+    bindAudio(el('resAudio'));
+    bindChrome();
+    el('dqBarTotal').textContent = st.bars.length;
+    el('dqStat').textContent = '共 ' + st.bars.length + ' 小节 · 全长 ' + mmss(totalDur()) +
+      ' · ♩=' + (Math.round(st.bars[0].bpm || 0) || '—');
+    el('dqWarn').hidden = true;
+    var card = el('dqScore');
+    card.dataset.ready = '1';
+    buildTab();
+    setView(st.view);
+    paint();
+    return true;
+  }
+
   function load() {
+    if (st.explicit) return;          /* 用户正从「最近产物」看历史，别被当前任务顶掉 */
     fetch('/api/status').then(function (r) { return r.json(); }).then(function (s) {
       if (!s || s.running || !s.song) return;
       var hasPdf = (s.results || []).some(function (r) { return r.kind === 'pdf'; });
@@ -2953,42 +3019,54 @@
       st.key = k;
       var prev = el('dqScore');
       if (prev) prev.removeAttribute('data-ready');
-      Promise.all([
-        fetch('/api/scoremap?song=' + encodeURIComponent(s.song)).then(function (r) { return r.ok ? r.json() : null; }),
-        fetch('/api/scorelayout?song=' + encodeURIComponent(s.song)).then(function (r) { return r.ok ? r.json() : null; })
-      ]).then(function (res) {
-        var sm = res[0], lo = res[1];
-        if (!sm || !sm.ok || !(sm.bars || []).length) { st.key = ''; return; }
-        st.song = s.song;
-        st.bars = sm.bars || [];
-        st.layout = (lo && lo.ok) ? lo : null;
-        st.page = 1; st.rows = 0; st.lastRow = -1;
+      fetchScore(s.song).then(function (res) {
+        if (!applyScore(res[0], res[1], s.song)) { st.key = ''; return; }
         var card = el('dqScore');
-        var mix = el('dqAudio');
-        var want = '/api/source?song=' + encodeURIComponent(s.song);
-        if (mix.getAttribute('src') !== want) mix.setAttribute('src', want);
-        bindAudio(mix);
-        bindAudio(el('resAudio'));
-        bindChrome();
-        el('dqBarTotal').textContent = st.bars.length;
-        el('dqStat').textContent = '共 ' + st.bars.length + ' 小节 · 全长 ' + mmss(totalDur());
-        card.dataset.ready = '1';
         var done = el('viewDone');
         card.hidden = !(done && !done.hidden);
-        buildTab();
-        setView(st.view);
-        paint();
+        setHist(false, '');
       }).catch(function () { st.key = ''; });
     }).catch(function () {});
   }
 
-  /* 卡片从隐藏变可见时宽度会变：盯住宽度，变了就按真实宽度重排 */
-  setInterval(function () {
-    if (st.view !== 'tab' || !st.bars.length) return;
-    var sc = el('dqScroll');
-    if (!sc || !sc.clientWidth) return;
-    if (Math.abs(sc.clientWidth - (st.lastW || 0)) > 4) buildTab();
-  }, 400);
+  /* 从「最近产物」打开某首歌的动态谱 */
+  function setHist(on, label) {
+    var box = el('dqHist');
+    if (!box) return;
+    box.hidden = !on;
+    if (on) el('dqHistName').textContent = label;
+    el('dqScore').dataset.explicit = on ? '1' : '';
+  }
+
+  function openSong(name) {
+    var card = el('dqScore');
+    if (!card || !name) return;
+    st.explicit = true;
+    st.key = '';
+    fetchScore(name).then(function (res) {
+      if (!applyScore(res[0], res[1], name)) {
+        st.explicit = false;
+        el('dqWarn').textContent = '这首歌没有找到可用的谱面数据（可能产物被删了）。';
+        el('dqWarn').hidden = false;
+        return;
+      }
+      setHist(true, name);
+      card.hidden = false;
+      try {
+        window.scrollTo({ top: card.offsetTop - 70, behavior: 'smooth' });
+      } catch (e) { window.scrollTo(0, card.offsetTop - 70); }
+      setView(st.view);
+    }).catch(function () { st.explicit = false; });
+  }
+
+  function backToJob() {
+    st.explicit = false;
+    st.key = '';
+    setHist(false, '');
+    load();
+  }
+
+  window.dqOpen = openSong;
 
   setInterval(load, 2500);
   setTimeout(load, 600);
