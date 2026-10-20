@@ -19,6 +19,7 @@
   </div>
   <nav class="side-nav">
     <button class="navitem on" data-page="new" aria-current="page"><svg aria-hidden="true" class="ni" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M8 3.5v9M3.5 8h9"/><circle cx="8" cy="8" r="6"/></svg>新建扒谱</button>
+    <button class="navitem" data-page="practice"><svg aria-hidden="true" class="ni" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M6.5 12.2V4.4l6-1.2v7.6"/><circle cx="4.6" cy="12.4" r="1.9"/><circle cx="10.6" cy="11.4" r="1.9"/></svg>练习</button>
     <button class="navitem" data-page="queue"><svg aria-hidden="true" class="ni" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M6 4.5h7M6 8h7M6 11.5h7"/><circle cx="3.2" cy="4.5" r="1"/><circle cx="3.2" cy="8" r="1"/><circle cx="3.2" cy="11.5" r="1"/></svg>任务队列<span class="navbadge" id="navQueue">0</span></button>
     <button class="navitem" data-page="library"><svg aria-hidden="true" class="ni" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M3 4h10M3 8h10M3 12h6"/></svg>谱面库<span class="navbadge" id="navLib">0</span></button>
   </nav>
@@ -206,10 +207,11 @@
     </div>
 
     <div class="barnav">
-      <button class="btn ghost sm" id="dqPrevBar" title="上一小节">上一小节</button>
-      <button class="btn ghost sm" id="dqNextBar" title="下一小节">下一小节</button>
+      <button class="btn ghost sm" id="dqPrevBar" title="上一小节（,）">上一小节</button>
+      <button class="btn ghost sm" id="dqNextBar" title="下一小节（.）">下一小节</button>
       <span class="bn-lab">第 <b id="dqBarNo">–</b> / <span id="dqBarTotal">–</span> 小节<span id="dqBarTime"></span></span>
       <span class="sp"></span>
+      <button class="btn ghost sm" id="dqGoPractice" title="去练习页：变速、区间循环、预备拍">练习 →</button>
       <span class="bn-lab" id="dqStat"></span>
       <audio id="dqAudio" preload="metadata"></audio>
     </div>
@@ -236,6 +238,76 @@
   </section>
 
 </div><!-- /pageNew -->
+
+
+<div class="page" id="pagePractice" hidden>
+  <div class="pagetitle pm-title">
+    <h1>练习</h1><span class="sub">慢速 · 循环 · 跟拍</span>
+    <span class="sp"></span>
+    <select class="inp" id="pmSong" aria-label="选择曲目"></select>
+    <button class="btn ghost sm" id="pmExit">退出练习</button>
+  </div>
+
+  <div class="card" id="pmEmpty">
+    <div class="empty">还没有可以练的谱面<br>
+      <span class="hint">先去「新建扒谱」跑一首，或在「谱面库」里打开一首，再回到这里</span></div>
+  </div>
+
+  <div id="pmHost"></div>
+
+  <div class="pm-console" id="pmConsole" hidden>
+    <div class="pm-row pm-transport">
+      <button class="pm-play" id="pmPlay" title="播放 / 暂停（空格）">▶</button>
+      <div class="pm-time"><span id="pmCur">0:00</span><span class="sep">/</span><span id="pmDur">0:00</span></div>
+      <div class="pm-scrub" id="pmScrub" title="拖动定位"><div class="pm-fill" id="pmFill"></div></div>
+      <div class="seg pm-src" id="pmSrc" role="group" aria-label="音源">
+        <button data-src="mix" class="on">原曲</button>
+        <button data-src="drum">鼓声</button>
+      </div>
+    </div>
+
+    <div class="pm-row pm-tools">
+      <span class="pm-lab">速度</span>
+      <div class="seg pm-rate" id="pmRate" role="group" aria-label="播放速度">
+        <button data-rate="0.5">0.5×</button>
+        <button data-rate="0.6">0.6×</button>
+        <button data-rate="0.75">0.75×</button>
+        <button data-rate="0.9">0.9×</button>
+        <button data-rate="1" class="on">1×</button>
+      </div>
+
+      <span class="pm-lab">区间</span>
+      <div class="pm-loop">
+        <button class="btn sm" id="pmSetA" title="把当前小节设为区间起点（[）">设为起点</button>
+        <button class="btn sm" id="pmSetB" title="把当前小节设为区间终点（]）">设为终点</button>
+        <button class="btn sm" id="pmLoop" disabled title="开关循环（L）">循环</button>
+        <button class="btn ghost sm" id="pmClear">清除</button>
+      </div>
+
+      <div class="pm-strip" id="pmStrip" title="整曲位置：拖动可定位">
+        <div class="pm-strip-range" id="pmStripRange"></div>
+        <div class="pm-strip-head" id="pmStripHead"></div>
+      </div>
+
+      <span class="pm-lab">重复</span>
+      <div class="seg pm-repeat" id="pmRepeat" role="group" aria-label="重复次数">
+        <button data-repeat="0" class="on">∞</button>
+        <button data-repeat="3">3</button>
+        <button data-repeat="5">5</button>
+        <button data-repeat="10">10</button>
+      </div>
+
+      <button class="btn ghost sm" id="pmCountIn" title="先用一小节节拍器倒数，再开始循环">预备拍</button>
+    </div>
+
+    <div class="pm-row pm-status">
+      <span class="pm-state" id="pmState">第 – 小节</span>
+      <span class="sp"></span>
+      <span class="pm-hint" id="pmHint">用 ←/→ 换页、[ ] 设区间、L 开关循环、Esc 退出练习</span>
+      <span class="pm-progress" id="pmProgress"></span>
+    </div>
+  </div>
+</div>
 
 <div class="page" id="pageQueue" hidden>
   <div class="pagetitle"><h1>任务队列</h1><span class="sub">一次丢一批，跑完一首自动接下一首</span>

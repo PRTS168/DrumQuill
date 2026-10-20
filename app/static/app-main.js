@@ -101,13 +101,8 @@
       var el = $(map[k]);
       if(k === name) show(el); else hide(el);
     });
-    /* 谱面工作台：本次完成后显示；从「最近产物」打开过的那首也一直留着 */
-    var sc = document.getElementById('dqScore');
-    if(sc){
-      var ok = sc.dataset.ready === '1' && (name === 'done' || sc.dataset.explicit === '1');
-      /* 用户主动打开的历史谱面：任务在跑（run）时也不要把它藏起来 */
-      sc.hidden = !ok || (name === 'run' && sc.dataset.explicit !== '1');
-    }
+    /* 谱面卡显示与否交给 app-score 的唯一出口决定（练习态也在那里处理） */
+    if(window.dqSyncCard) window.dqSyncCard();
   }
 
   /* ================= 设备 ================= */

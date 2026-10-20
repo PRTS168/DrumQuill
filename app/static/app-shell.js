@@ -6,6 +6,7 @@
   var $ = function (id) { return document.getElementById(id); };
   var pages = {
     new: 'pageNew',
+    practice: 'pagePractice',
     queue: 'pageQueue',
     library: 'pageLibrary',
     settings: 'setModal',
@@ -13,6 +14,7 @@
   };
   var crumb = {
     new: ['新建扒谱', '把歌变成鼓谱'],
+    practice: ['练习', '慢速 · 循环 · 跟拍'],
     queue: ['任务队列', '批量排队，跑完一首自动接下一首'],
     library: ['谱面库', '点开就是可播放的谱面'],
     settings: ['设置', '组件 · 模型 · 路径'],
@@ -36,6 +38,13 @@
     if (sub) sub.textContent = c[1];
     var m = document.querySelector('main');
     if (m) m.scrollTop = 0; else { try { window.scrollTo(0, 0); } catch (e) {} }
+    if (name === 'practice') {
+      var ok = window.dqEnterPractice && window.dqEnterPractice();
+      var empty = $('pmEmpty');
+      if (empty) empty.hidden = !!ok;
+    } else if (window.dqExitPractice) {
+      window.dqExitPractice();                     /* 离开练习页：把谱面卡搬回原位 */
+    }
     if (name === 'library') refreshLib();          /* 每次进库都重新读一次产物目录 */
     if (name === 'settings') {
       /* 别用「点按钮」驱动（会和 openSettings 互相递归）；直接刷新这一页要的数据 */
@@ -59,6 +68,8 @@
   if (s1 && !s1.getAttribute('data-page')) {
     s1.addEventListener('click', function () { show('settings'); });
   }
+  var pmx = $('pmExit');
+  if (pmx) pmx.addEventListener('click', function () { show('new'); });
   var sc1 = $('setClose');
   if (sc1) sc1.addEventListener('click', function () { show('new'); });
   var sc2 = $('setupClose');
@@ -121,6 +132,15 @@
   if (rb) rb.addEventListener('click', function () { refreshLib(); });
 
   document.addEventListener('keydown', function (ev) {
+    if ((ev.key === 'p' || ev.key === 'P') && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+      var pdfm = $('pdfModal');
+      if (pdfm && !pdfm.hidden) return;              /* PDF 预览开着时别抢按键 */
+      var t2 = ev.target;
+      if (t2 && t2.closest && t2.closest('input,textarea,select,[contenteditable]')) return;
+      ev.preventDefault();
+      show('practice');
+      return;
+    }
     if (ev.key !== 'r' && ev.key !== 'R') return;
     if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
     var t = ev.target;
@@ -250,6 +270,10 @@
       return;
     }
     if (ev.key === 'Escape' && ck.open) { ev.preventDefault(); ev.stopPropagation(); cmdkClose(); }
+    if (ev.key === 'Escape' && !ck.open) {
+      var pp = $('pagePractice');
+      if (pp && !pp.hidden) { ev.preventDefault(); show('new'); }
+    }
   });
 
   setTimeout(bindCmdk, 800);
