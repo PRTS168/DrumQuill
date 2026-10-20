@@ -189,10 +189,10 @@
 
 两种下载都放在 [Releases](https://github.com/PRTS168/DrumQuill/releases)：
 
-- `DrumQuill-2.0.0-win64.zip` —— 完整包，含启动器 `DrumQuill.exe`（推荐给不想碰命令行的用户）
-- `DrumQuill-2.0.0-source.zip` —— 只有源码，体积小，适合自己看代码或二次开发
+- `DrumQuill-<版本>-win64.zip` —— 完整包，含启动器 `DrumQuill.exe`（推荐给不想碰命令行的用户）
+- `DrumQuill-<版本>-source.zip` —— 只有源码，体积小，适合自己看代码或二次开发
 
-**带启动器的完整包**
+**方式一：带启动器的完整包（推荐）**
 
 解压到任意目录（路径尽量不含空格），第一次双击 `start.bat`：它会把依赖装进包内的 `.venv`
 （约 10 分钟，走国内镜像、可断点续传），装完自动打开界面。之后可以直接双击
