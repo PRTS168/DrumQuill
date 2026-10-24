@@ -3,23 +3,21 @@
   'use strict';
   var el = function (id) { return document.getElementById(id); };
 
-  /* 谱面卡显示与否：全仓只有这一处做决定（练习态 / 完成态 / 历史显式打开） */
+  /* 动态谱（会跟着音乐走的那张）只在练习页出现；扒谱页交给结果卡里的静态预览。
+     全仓只有这一处决定它的显隐。 */
   function syncCardVisibility() {
     var card = el('dqScore');
     if (!card) return;
-    if (st.practice) { card.hidden = false; syncPlayerVisibility(); return; }
-    var ready = card.dataset.ready === '1';
-    var done = el('viewDone');
-    var doneOn = !!(done && !done.hidden);
-    var explicit = card.dataset.explicit === '1';
-    card.hidden = !(ready && (doneOn || explicit));
+    card.hidden = !st.practice;
     syncPlayerVisibility();
   }
-  /* 播放器跟着谱面一起出现：看得见谱面就看得见播放器，反之亦然（只有这一条规则） */
+  /* 播放器跟着"当前有歌在手上"出现：任务进行中（看的不是谱）就收起来 */
   function syncPlayerVisibility() {
-    var p = el('dqPlayer'), card = el('dqScore');
+    var p = el('dqPlayer');
     if (!p) return;
-    p.hidden = !(st.song && card && !card.hidden);
+    var runEl = el('viewRun');
+    var running = !!(runEl && !runEl.hidden);
+    p.hidden = !(st.song && !running);
   }
   window.dqSyncCard = syncCardVisibility;
   var st = {
@@ -953,11 +951,10 @@
     }
     var play = el('dqPlay');
     if (play && !play.dataset.b) { play.dataset.b = '1'; play.onclick = togglePlay; }
-    var back = el('dqHistBack');
-    if (back) back.onclick = function () { backToJob(); };
     watchUserScroll();
 
-    /* 聚焦模式：隐藏侧栏，谱面独占；Esc 退出 */
+    /* 聚焦模式：隐藏侧栏，只留内容；Esc 退出。
+       扒谱页的「放大」和练习页的「聚焦」用的是同一个开关。 */
     var shellEl = document.querySelector('.shell');
     function setFocus(on) {
       if (!shellEl) return;
@@ -967,6 +964,7 @@
       sc.chasing = false;
       setTimeout(function () { if (st.layout) { renderPdf(); paintPdf(); } }, 80);
     }
+    window.dqToggleFocus = function () { setFocus(!(shellEl && shellEl.classList.contains('focus'))); };
     var fb = el('dqFocus');
     if (fb && !fb.dataset.b) {
       fb.dataset.b = '1';
@@ -1157,6 +1155,7 @@
       el('dqOverlay').innerHTML = '';
     }
     syncPracticeButtons();       /* 换歌后清掉进度条上残留的 A–B 高亮 */
+    if (window.dqResultFor) window.dqResultFor(name);    /* 扒谱页那张结果卡跟着换内容 */
     /* 谱面刚就绪时，如果人已经在练习页（之前是空的），直接把练习接上 */
     var pp = el('pagePractice');
     if (pp && !pp.hidden && !st.practice) enterPractice();
@@ -1164,11 +1163,10 @@
   }
 
   function setHist(on, label) {
-    var box = el('dqHist');
-    if (!box) return;
-    box.hidden = !on;
-    if (on) el('dqHistName').textContent = label;
-    el('dqScore').dataset.explicit = on ? '1' : '';
+    st.explicit = on;
+    if (window.dqResultHist) window.dqResultHist(on, label);
+    var card = el('dqScore');
+    if (card) card.dataset.explicit = on ? '1' : '';
   }
 
   function load() {
@@ -1226,26 +1224,13 @@
         if (window.dqToast) window.dqToast(w1, true);      /* 卡片是隐藏的，警戒条看不见，必须同时提示 */
         return;
       }
-      setHist(true, name);
+      setHist(name !== st.jobSong, name);    /* 打开的就是本次结果时不算"看历史" */
       syncCardVisibility();
+      if (window.dqShowView) window.dqShowView('done');    /* 扒谱页的结果卡就是这首歌的成品页 */
       if (st.practice) enterPractice();
-      /* 看的是历史：先把任务态卡片收掉，别让「选歌 / 结果」卡孤零零挂在上面 */
-      ['viewPick', 'viewDone', 'viewFail'].forEach(function (id) {
-        var e = el(id);
-        if (e) e.hidden = true;
-      });
-      /* 滚到这一页最上面那张可见卡（有结论卡就滚到结论卡，否则滚到谱面），
-         别把上面的内容顶出视野 */
-      var tgt = null;
-      ['viewPick', 'viewRun', 'viewDone', 'viewFail', 'dqScore'].forEach(function (id) {
-        var e = el(id);
-        if (!tgt && e && !e.hidden) tgt = e;
-      });
-      var tgtEl = tgt || card;
       var mm = scroller();
-      var rect = tgtEl.getBoundingClientRect();
-      if (mm === document.documentElement) window.scrollTo(0, rect.top + window.scrollY - 12);
-      else mm.scrollTop += rect.top - 12;
+      if (mm === document.documentElement) window.scrollTo(0, 0);
+      else mm.scrollTop = 0;
     }).catch(function (e) {
       st.explicit = false;
       if (window.console) console.error('[dq] 打开谱面失败：', e && (e.stack || e.message || e));
@@ -1270,6 +1255,26 @@
   window.dqExitPractice = exitPractice;
   window.dqHidePlayer = hidePlayer;
   window.dqSyncSrc = syncSrcButtons;      /* 鼓声轨就绪/清空后，让「鼓声」按钮跟着变 */
+  window.dqBackToJob = backToJob;
+  window.dqIsExplicit = function () { return !!st.explicit; };
+  /* 试听某一行产物（把播放器切到「鼓声」并播放这个文件） */
+  window.dqPlayProduct = function (url) {
+    var ra = el('resAudio');
+    if (!ra || !url) return;
+    var from = curAudio();
+    if (from && from !== ra) { try { from.pause(); } catch (e) {} }
+    ra.setAttribute('src', url);
+    st.src = 'drum';
+    bindAudio(ra);
+    syncSrcButtons();
+    var go = function () {
+      try { ra.currentTime = 0; } catch (e) {}
+      var p = ra.play();
+      if (p && p.catch) p.catch(function () {});
+      paint();
+    };
+    if (ra.readyState >= 1) go(); else ra.addEventListener('loadedmetadata', go, { once: true });
+  };
   window.__dq = { st: st, sc: sc, disp: disp, sys: systemDocRect, sticky: headerH,
     max: scrollMaxH, anchor: followAnchor, follow: scrollToSystem, scroll: scroller };
 

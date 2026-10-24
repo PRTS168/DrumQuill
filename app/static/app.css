@@ -300,7 +300,37 @@ h1{font-size:22px;font-weight:600;letter-spacing:-.2px}
 .donehead .dh-main{flex:1;min-width:200px}
 .donehead .dh-act{display:flex;align-items:center;gap:var(--s2);flex-wrap:wrap}
 #viewDone.slim{margin-bottom:var(--s4)}
-#viewDone .donehead{margin-bottom:0}
+#viewDone .donehead{margin-bottom:var(--s4)}
+
+/* 结果卡：左预览、右产物 */
+.resgrid{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:var(--s5);align-items:start}
+.resprev{display:flex;flex-direction:column;gap:8px;min-width:0}
+.resprev-frame{
+  background:var(--bg-sunken);border-radius:var(--r-m);padding:10px;
+  display:flex;justify-content:center;overflow:hidden;max-height:58vh
+}
+.resprev-frame img{
+  display:block;max-width:100%;max-height:calc(58vh - 20px);width:auto;height:auto;
+  border-radius:2px;background:#fff;cursor:zoom-in;
+  box-shadow:0 0 0 .5px rgba(0,0,0,.10),0 6px 22px -8px rgba(0,0,0,.16)
+}
+.resprev-bar{display:flex;align-items:center;gap:var(--s2);flex-wrap:wrap}
+.resprev-bar .sp{flex:1}
+.resprod{display:flex;flex-direction:column;min-width:0}
+.resprod-head{display:flex;align-items:center;gap:8px;font-size:11px;font-weight:600;letter-spacing:.5px;
+  text-transform:uppercase;color:var(--ink-3);margin-bottom:2px}
+.resprod-head .sp{flex:1}
+.resprod-head .btn{text-transform:none;letter-spacing:0}
+.prow{display:flex;align-items:center;gap:var(--s3);padding:11px 0;border-bottom:1px solid var(--sep)}
+.prow:last-child{border-bottom:0}
+.prow .pinfo{flex:1;min-width:0}
+.prow .pn{font-size:13px;font-weight:500}
+.prow .pm{font-family:var(--mono);font-size:11px;color:var(--ink-3);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.prow .pact{display:flex;gap:6px;flex:none}
+.reshint{margin-top:var(--s4);font-size:12px;color:var(--ink-3);line-height:1.6}
+@media (max-width:960px){.resgrid{grid-template-columns:1fr;gap:var(--s4)}}
+.shell.focus .resprev-frame{max-height:none}
+.shell.focus .resprev-frame img{max-height:none}
 
 .hrow{display:flex;align-items:center;gap:var(--s3);padding:10px 0;border-bottom:1px solid var(--sep)}
 .hrow:last-child{border-bottom:0}

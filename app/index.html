@@ -146,26 +146,45 @@
     <details class="logwrap" id="logWrap"><summary>运行日志（可展开）</summary><div class="log" id="log"></div></details>
   </section>
 
-  <!-- 态 3a：结果（成功）—— 结论一行，剩下的交给下面的谱面和底部播放器 -->
-  <section class="card slim" id="viewDone" hidden>
+  <!-- 态 3a：结果 —— 左边预览这张 PDF，右边是各个主要产物的下载 -->
+  <section class="card" id="viewDone" hidden>
     <div class="donehead">
       <div class="bigicon">✓</div>
       <div class="dh-main">
-        <h1>鼓谱做好了</h1>
+        <h1 id="doneTitle">鼓谱做好了</h1>
         <div class="metaline" id="doneMeta"></div>
       </div>
       <div class="dh-act">
-        <details class="menu menu-right" id="doneMenu">
-          <summary class="btn primary" title="下载 PDF / MusicXML / MIDI，或打开输出目录">下载与打开</summary>
-          <div class="menu-pop menu-right">
-            <div class="menu-sec">产物文件</div>
-            <div id="doneFiles"></div>
-            <div class="menu-sep"></div>
-            <a class="menu-item" id="openPdfSys" href="#">用系统阅读器看 PDF</a>
-            <button class="menu-item" id="openFolderBtn">打开输出目录</button>
-          </div>
-        </details>
+        <button class="btn ghost" id="doneBack" hidden title="回到这次扒谱的结果">回到本次结果</button>
         <button class="btn ghost" id="againBtn">再扒一首</button>
+      </div>
+    </div>
+
+    <div class="resgrid">
+      <div class="resprev" id="donePv">
+        <div class="resprev-frame">
+          <img id="donePvImg" alt="鼓谱预览" title="点一下放大">
+        </div>
+        <div class="resprev-bar">
+          <span class="pgnav">
+            <button class="btn ghost sm" id="donePvPrev" title="上一页">‹</button>
+            <span class="pv-page" id="donePvPage">– / –</span>
+            <button class="btn ghost sm" id="donePvNext" title="下一页">›</button>
+          </span>
+          <span class="sp"></span>
+          <button class="btn ghost sm" id="donePvFull" title="放大到整屏（Esc 退出）">放大</button>
+          <button class="btn ghost sm" id="donePvSys" title="交给系统 PDF 阅读器">用系统阅读器打开</button>
+        </div>
+      </div>
+
+      <div class="resprod">
+        <div class="resprod-head">
+          <span>主要产物</span>
+          <span class="sp"></span>
+          <button class="btn ghost sm" id="openFolderBtn">打开输出目录</button>
+        </div>
+        <div id="doneFiles"></div>
+        <div class="reshint">想看谱面跟着音乐走、能慢速或者圈几小节反复练？点右下角播放器上的「练习」。</div>
       </div>
     </div>
   </section>
@@ -186,17 +205,13 @@
     </div>
   </section>
 
-  <!-- 谱面：就是打印出来那张 PDF，绿色播放头跟着底部播放器走 -->
+  <!-- 谱面：就是打印出来那张 PDF，绿色播放头跟着播放器走（只在练习页出现） -->
   <section class="card scorecard" id="dqScore" hidden>
     <div class="score-head">
       <span class="pgnav">
         <button class="btn ghost sm" id="dqPrevPage" title="上一页（←）">‹</button>
         <span class="pv-page" id="dqPageLabel">1 / 1</span>
         <button class="btn ghost sm" id="dqNextPage" title="下一页（→）">›</button>
-      </span>
-      <span class="sh-hist" id="dqHist" hidden>
-        <span>正在看历史：<b id="dqHistName"></b></span>
-        <button class="btn ghost sm" id="dqHistBack">回到本次结果</button>
       </span>
       <div class="sh-tools">
         <select class="inp" id="dqZoom" title="清晰度">
