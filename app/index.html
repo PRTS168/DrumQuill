@@ -36,12 +36,15 @@
   <div class="topright">
     <span class="statusdot" id="mark" title="状态"></span>
     <span class="chip" id="engineChip" title="分离（Demucs）使用的设备">检测中…</span>
-    <button class="btn ghost sm" id="settingsBtn" title="设置">设置</button>
   </div>
 </header>
 
 <main>
 <div class="wrap">
+
+<!-- ============================================================
+     新建扒谱：只有三种态 —— 选歌 / 进行中 / 结果（成功或失败）
+     ============================================================ -->
 <div class="page" id="pageNew">
 
   <div class="banner" id="setupBanner" hidden>
@@ -50,20 +53,26 @@
     <button class="btn sm" id="setupBannerBtn">安装组件</button>
   </div>
 
-  <!-- ============ 视图 1：选择 / 已选文件 ============ -->
+  <!-- 态 1：选歌 -->
   <section class="card" id="viewPick">
     <div class="cardhead">
       <div>
         <h1>把一首歌变成鼓谱</h1>
-        <div class="sub">自动分离鼓轨、识别每个鼓点，排版成可打印的 PDF；同时给你 MusicXML、MIDI 和鼓声试听。</div>
+        <div class="sub">自动分离鼓轨、识别鼓点，排成能打印的鼓谱，还能跟着音频练。</div>
       </div>
     </div>
 
     <div class="drop" id="drop" role="button" tabindex="0" aria-label="选择音频文件">
       <div class="ic"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></svg></div>
       <div class="t">把歌曲拖到这里，或 <span class="lnk">点击选择文件</span></div>
-      <div class="s">mp3 · wav · flac · ogg · m4a · aac</div>
+      <div class="s">mp3 · wav · flac · ogg · m4a · aac　—　拖进来就能用，其余全是自动的</div>
       <input type="file" id="file" accept=".mp3,.wav,.flac,.ogg,.m4a,.aac">
+    </div>
+
+    <div class="quicksteps" id="quickSteps">
+      <div class="qs"><b>1</b><span>拖进来一首歌</span></div>
+      <div class="qs"><b>2</b><span>等它自动扒谱，几分钟</span></div>
+      <div class="qs"><b>3</b><span>看谱、试听，想练就练</span></div>
     </div>
 
     <div id="pickedBlock" hidden>
@@ -76,53 +85,52 @@
         <button class="btn ghost sm" id="changeFileBtn">换一首</button>
       </div>
 
-      <div class="opts">
-        <div class="opt">
-          <label for="bpm">速度 BPM</label>
-          <input class="inp" id="bpm" type="number" min="40" max="300" placeholder="自动">
-          <span class="hint">留空则自动检测，也可 40–300 手动填</span>
-        </div>
-        <div class="opt">
-          <label>分离设备</label>
-          <div class="seg" id="devSwitch" role="group" aria-label="分离设备">
-            <button data-dev="auto" class="on">自动</button>
-            <button data-dev="cpu">CPU</button>
-            <button data-dev="gpu">GPU</button>
+      <details class="adv" id="advOpts">
+        <summary><span>高级选项</span><span class="adv-sub">速度 · 分离设备 · 这次要什么</span></summary>
+        <div class="adv-body">
+          <div class="opt">
+            <label for="bpm">速度 BPM</label>
+            <input class="inp" id="bpm" type="number" min="40" max="300" placeholder="自动">
+            <span class="hint">留空则自动检测，也可 40–300 手动填</span>
           </div>
-          <span class="hint" id="devHint">检测中…</span>
+          <div class="opt">
+            <label>分离设备</label>
+            <div class="seg" id="devSwitch" role="group" aria-label="分离设备">
+              <button data-dev="auto" class="on">自动</button>
+              <button data-dev="cpu">CPU</button>
+              <button data-dev="gpu">GPU</button>
+            </div>
+            <span class="hint" id="devHint">检测中…</span>
+          </div>
+          <div class="opt">
+            <label>这次要什么</label>
+            <div class="modes" id="modeSwitch" role="group" aria-label="产出模式">
+              <button class="jobmode on" data-mode="full"><b>完整扒谱</b><span>鼓谱 + 鼓声</span></button>
+              <button class="jobmode" data-mode="score"><b>只要谱子</b><span>PDF / MusicXML / MIDI</span></button>
+              <button class="jobmode" data-mode="audio"><b>只要音频</b><span>鼓声 MP3（含转录）</span></button>
+              <button class="jobmode" data-mode="stems"><b>只要鼓声</b><span>纯鼓轨，最快</span></button>
+            </div>
+            <span class="hint" id="modeHint">完整：鼓谱 PDF + MusicXML + MIDI + 鼓声音频</span>
+          </div>
         </div>
-      </div>
-
-      <div class="opt" style="margin-top:16px">
-        <label>这次要什么</label>
-        <div class="modes" id="modeSwitch" role="group" aria-label="产出模式">
-          <button class="jobmode on" data-mode="full"><b>完整扒谱</b><span>鼓谱 + 鼓声</span></button>
-          <button class="jobmode" data-mode="score"><b>只要谱子</b><span>PDF / MusicXML / MIDI</span></button>
-          <button class="jobmode" data-mode="audio"><b>只要音频</b><span>鼓声 MP3（含转录）</span></button>
-          <button class="jobmode" data-mode="stems"><b>只要鼓声</b><span>纯鼓轨，最快</span></button>
-        </div>
-        <span class="hint" id="modeHint">完整：鼓谱 PDF + MusicXML + MIDI + 鼓声音频</span>
-      </div>
+      </details>
 
       <div class="actions">
         <button class="btn primary big" id="startBtn">开始扒谱</button>
         <button class="btn big joinqueue" id="addQueueBtn" title="把当前选好的这首排进队列，跑完自动接下一首">加入队列</button>
-        <span class="hint" id="etaHint" style="font-size:12px;color:var(--ink-3)"></span>
+        <span class="hint" id="etaHint"></span>
       </div>
       <div class="note warn" id="optMissing" hidden></div>
     </div>
 
-    <!-- 必需组件缺失时的阻断提示 -->
     <div class="blocker" id="blocker" hidden></div>
   </section>
 
-  <!-- ============ 视图 2：处理中 ============ -->
+  <!-- 态 2：进行中 -->
   <section class="card" id="viewRun" hidden>
     <div class="cardhead">
       <div>
-        <div class="runhead">
-          <span class="song" id="runSong"></span>
-        </div>
+        <div class="runhead"><span class="song" id="runSong"></span></div>
         <div class="metaline" id="runMeta"></div>
       </div>
       <div class="right clock" id="runClock"></div>
@@ -138,89 +146,31 @@
     <details class="logwrap" id="logWrap"><summary>运行日志（可展开）</summary><div class="log" id="log"></div></details>
   </section>
 
-  <!-- ============ 视图 3：完成 —— 结论条（细节都在下面的谱面工作台里） ============ -->
+  <!-- 态 3a：结果（成功）—— 结论一行，剩下的交给下面的谱面和底部播放器 -->
   <section class="card slim" id="viewDone" hidden>
     <div class="donehead">
       <div class="bigicon">✓</div>
       <div class="dh-main">
-        <h1>扒谱完成</h1>
+        <h1>鼓谱做好了</h1>
         <div class="metaline" id="doneMeta"></div>
       </div>
       <div class="dh-act">
-        <button class="btn primary" id="openPdfBtn">全屏看鼓谱</button>
-        <a class="btn" id="savePdfBtn" href="#">保存 PDF</a>
-        <button class="btn ghost" id="openFolderBtn">输出目录</button>
+        <details class="menu menu-right" id="doneMenu">
+          <summary class="btn primary" title="下载 PDF / MusicXML / MIDI，或打开输出目录">下载与打开</summary>
+          <div class="menu-pop menu-right">
+            <div class="menu-sec">产物文件</div>
+            <div id="doneFiles"></div>
+            <div class="menu-sep"></div>
+            <a class="menu-item" id="openPdfSys" href="#">用系统阅读器看 PDF</a>
+            <button class="menu-item" id="openFolderBtn">打开输出目录</button>
+          </div>
+        </details>
         <button class="btn ghost" id="againBtn">再扒一首</button>
       </div>
     </div>
-    <!-- 兼容旧逻辑的占位：不再出现第二套谱面/第二个播放器 -->
-    <div class="scorebox" id="scoreBox" hidden></div>
-    <div class="player" id="audioPlayer" style="display:none"><audio id="resAudio" preload="metadata"></audio></div>
   </section>
 
-  <!-- ============ 谱面工作台：就是打印出来那张 PDF，光标跟着播放走 ============ -->
-  <section class="card scorecard" id="dqScore" hidden>
-    <div class="score-head">
-      <div>
-        <h1>鼓谱</h1>
-        <div class="sh-sub" id="dqSub">与打印出来那张 PDF 完全一致 · 绿色播放头跟着音乐走 · 点小节跳转</div>
-        <div class="sh-hist" id="dqHist" hidden>
-          <span>正在看历史：<b id="dqHistName"></b></span>
-          <button class="btn ghost sm" id="dqHistBack">回到本次结果</button>
-        </div>
-      </div>
-      <div class="sh-tools">
-        <span class="pgnav">
-          <button class="btn ghost sm" id="dqPrevPage" title="上一页（←）">‹</button>
-          <span class="pv-page" id="dqPageLabel">1 / 1</span>
-          <button class="btn ghost sm" id="dqNextPage" title="下一页（→）">›</button>
-        </span>
-        <button class="btn ghost sm" id="dqFocus" title="聚焦：隐藏侧栏，只留谱面（Esc 退出）">聚焦</button>
-        <select class="inp" id="dqZoom" title="清晰度">
-          <option value="fit">适应宽度</option>
-          <option value="page">适应整页</option>
-          <option value="hd">高清</option>
-          <option value="big">放大</option>
-        </select>
-      </div>
-    </div>
-
-    <div class="transport">
-      <button class="tplay" id="dqPlay" title="播放 / 暂停（空格）">▶</button>
-      <div class="ttime"><span id="dqCur">0:00</span><span class="sep">/</span><span id="dqDur">0:00</span></div>
-      <div class="tscrub" id="dqScrub" title="拖动定位（也可直接点谱面）">
-        <div class="tfill" id="dqFill"></div><div class="thead" id="dqHeadPtr"></div>
-      </div>
-      <div class="seg srcseg" id="dqSrc" role="group" aria-label="音源">
-        <button data-src="mix" class="on" title="原曲音频：拍点就是从它算出来的，跟谱最准">原曲</button>
-        <button data-src="drum" title="按识别结果合成的鼓声（需要本次生成了音频）">鼓声</button>
-      </div>
-    </div>
-
-    <div class="note warn" id="dqWarn" hidden style="margin:10px 20px 0"></div>
-
-    <div class="paper" id="dqPaper">
-      <div class="pg" id="dqStage">
-        <img id="dqPageImg" alt="鼓谱">
-        <svg id="dqOverlay"></svg>
-      </div>
-    </div>
-
-    <div class="barnav">
-      <button class="btn ghost sm" id="dqPrevBar" title="上一小节（,）">上一小节</button>
-      <button class="btn ghost sm" id="dqNextBar" title="下一小节（.）">下一小节</button>
-      <span class="bn-lab">第 <b id="dqBarNo">–</b> / <span id="dqBarTotal">–</span> 小节<span id="dqBarTime"></span></span>
-      <span class="sp"></span>
-      <button class="btn ghost sm" id="dqGoPractice" title="去练习页：变速、区间循环、预备拍">练习 →</button>
-      <span class="bn-lab" id="dqStat"></span>
-      <audio id="dqAudio" preload="metadata"></audio>
-    </div>
-
-    <div class="prod" id="doneList"></div>
-    <details class="logwrap" style="margin:0 20px 16px"><summary>运行日志</summary><div class="log" id="doneLog"></div></details>
-  </section>
-
-  <!-- ============ 视图 4：失败 / 中断 ============ -->
+  <!-- 态 3b：结果（失败 / 中断） -->
   <section class="card" id="viewFail" hidden>
     <div class="donehead">
       <div class="bigicon bad" id="failIcon">!</div>
@@ -234,91 +184,75 @@
       <button class="btn primary big" id="retryBtn">重试这次</button>
       <button class="btn" id="failAgainBtn">换一首</button>
     </div>
-    <details class="logwrap" id="failLogWrap"><summary>运行日志（可展开）</summary><div class="log" id="failLog"></div></details>
+  </section>
+
+  <!-- 谱面：就是打印出来那张 PDF，绿色播放头跟着底部播放器走 -->
+  <section class="card scorecard" id="dqScore" hidden>
+    <div class="score-head">
+      <span class="pgnav">
+        <button class="btn ghost sm" id="dqPrevPage" title="上一页（←）">‹</button>
+        <span class="pv-page" id="dqPageLabel">1 / 1</span>
+        <button class="btn ghost sm" id="dqNextPage" title="下一页（→）">›</button>
+      </span>
+      <span class="sh-hist" id="dqHist" hidden>
+        <span>正在看历史：<b id="dqHistName"></b></span>
+        <button class="btn ghost sm" id="dqHistBack">回到本次结果</button>
+      </span>
+      <div class="sh-tools">
+        <select class="inp" id="dqZoom" title="清晰度">
+          <option value="fit">适应宽度</option>
+          <option value="page">适应整页</option>
+          <option value="hd">高清</option>
+          <option value="big">放大</option>
+        </select>
+        <button class="btn ghost sm" id="dqFocus" title="聚焦：隐藏侧栏，只留谱面（Esc 退出）">聚焦</button>
+      </div>
+    </div>
+
+    <div class="note warn" id="dqWarn" hidden style="margin:12px 0 0"></div>
+
+    <div class="paper" id="dqPaper">
+      <div class="pg" id="dqStage">
+        <img id="dqPageImg" alt="鼓谱">
+        <svg id="dqOverlay"></svg>
+      </div>
+    </div>
+
+    <div class="baraxis">
+      <button class="btn ghost sm" id="dqPrevBar" title="上一小节（,）">‹ 上一小节</button>
+      <span class="bx-lab">第 <b id="dqBarNo">–</b> / <span id="dqBarTotal">–</span> 小节<span id="dqBarTime"></span></span>
+      <button class="btn ghost sm" id="dqNextBar" title="下一小节（.）">下一小节 ›</button>
+      <span class="sp"></span>
+      <span class="bx-lab" id="dqStat"></span>
+    </div>
   </section>
 
 </div><!-- /pageNew -->
 
 
+<!-- ============================================================
+     练习：同一张谱面 + 底部播放器多出一行练习工具
+     ============================================================ -->
 <div class="page" id="pagePractice" hidden>
-  <div class="pagetitle pm-title">
-    <h1>练习</h1><span class="sub">慢速 · 循环 · 跟拍</span>
-    <span class="sp"></span>
-    <select class="inp" id="pmSong" aria-label="选择曲目"></select>
-    <button class="btn ghost sm" id="pmExit">退出练习</button>
-  </div>
-
   <div class="card" id="pmEmpty">
-    <div class="empty">还没有可以练的谱面<br>
-      <span class="hint">先去「新建扒谱」跑一首，或在「谱面库」里打开一首，再回到这里</span></div>
+    <div class="empty">这会儿还没有谱面可练<br>
+      <span class="hint">先去「新建扒谱」做一首，或者在「谱面库」里点开一首</span>
+      <div class="actions" style="justify-content:center">
+        <button class="btn primary" id="pmGoNew">去扒一首</button>
+      </div>
+    </div>
   </div>
 
   <div id="pmHost"></div>
-
-  <div class="pm-console" id="pmConsole" hidden>
-    <div class="pm-row pm-transport">
-      <button class="pm-play" id="pmPlay" title="播放 / 暂停（空格）">▶</button>
-      <div class="pm-time"><span id="pmCur">0:00</span><span class="sep">/</span><span id="pmDur">0:00</span></div>
-      <div class="pm-scrub" id="pmScrub" title="拖动定位"><div class="pm-fill" id="pmFill"></div></div>
-      <div class="seg pm-src" id="pmSrc" role="group" aria-label="音源">
-        <button data-src="mix" class="on">原曲</button>
-        <button data-src="drum">鼓声</button>
-      </div>
-    </div>
-
-    <div class="pm-row pm-tools">
-      <span class="pm-lab">速度</span>
-      <div class="seg pm-rate" id="pmRate" role="group" aria-label="播放速度">
-        <button data-rate="0.5">0.5×</button>
-        <button data-rate="0.6">0.6×</button>
-        <button data-rate="0.75">0.75×</button>
-        <button data-rate="0.9">0.9×</button>
-        <button data-rate="1" class="on">1×</button>
-      </div>
-
-      <span class="pm-lab">区间</span>
-      <div class="pm-loop">
-        <button class="btn sm" id="pmSetA" title="把当前小节设为区间起点（[）">设为起点</button>
-        <button class="btn sm" id="pmSetB" title="把当前小节设为区间终点（]）">设为终点</button>
-        <button class="btn sm" id="pmLoop" disabled title="开关循环（L）">循环</button>
-        <button class="btn ghost sm" id="pmClear">清除</button>
-      </div>
-
-      <div class="pm-strip" id="pmStrip" title="整曲位置：拖动可定位">
-        <div class="pm-strip-range" id="pmStripRange"></div>
-        <div class="pm-strip-head" id="pmStripHead"></div>
-      </div>
-
-      <span class="pm-lab">重复</span>
-      <div class="seg pm-repeat" id="pmRepeat" role="group" aria-label="重复次数">
-        <button data-repeat="0" class="on">∞</button>
-        <button data-repeat="3">3</button>
-        <button data-repeat="5">5</button>
-        <button data-repeat="10">10</button>
-      </div>
-
-      <button class="btn ghost sm" id="pmCountIn" title="先用一小节节拍器倒数，再开始循环">预备拍</button>
-    </div>
-
-    <div class="pm-row pm-status">
-      <span class="pm-state" id="pmState">第 – 小节</span>
-      <span class="sp"></span>
-      <span class="pm-hint" id="pmHint">用 ←/→ 换页、[ ] 设区间、L 开关循环、Esc 退出练习</span>
-      <span class="pm-progress" id="pmProgress"></span>
-    </div>
-  </div>
 </div>
 
 <div class="page" id="pageQueue" hidden>
-  <div class="pagetitle"><h1>任务队列</h1><span class="sub">一次丢一批，跑完一首自动接下一首</span>
-    <span class="sp"></span><span class="hint" id="queueEta"></span>
-  </div>
+  <div class="pagetitle acts"><span class="hint" id="queueEta"></span></div>
   <section class="card"><div id="dqQueue"></div></section>
 </div>
 
 <div class="page" id="pageLibrary" hidden>
-  <div class="pagetitle"><h1>谱面库</h1><span class="sub">点开就是可播放的谱面</span>
-    <span class="sp"></span>
+  <div class="pagetitle acts">
     <span class="right mono" id="outPathHint"></span>
     <button class="btn ghost sm" id="libRefresh" title="重新读取产物目录（R）">刷新</button>
   </div>
@@ -329,9 +263,7 @@
 
 <!-- ============ 设置 ============ -->
 <div class="page" id="setModal" hidden>
-  <div class="pagetitle"><h1>设置</h1><span class="sub">组件 · 模型 · 路径</span>
-    <span class="sp"></span><button class="btn ghost sm" id="setClose">返回</button>
-  </div>
+  <div class="pagetitle acts"><button class="btn ghost sm" id="setClose">返回</button></div>
   <div class="card" style="max-width:820px">
     <div>
       <div class="sect" style="padding-top:0">能力与组件</div>
@@ -370,12 +302,11 @@
 
 <!-- ============ 组件安装向导 ============ -->
 <div class="page" id="setupModal" hidden>
-  <div class="pagetitle"><h1 id="setupTitle">安装向导</h1><span class="sub">选组件 → 安装 → 完成</span>
+  <div class="pagetitle"><h1 id="setupTitle">安装向导</h1>
     <span class="sp"></span><button class="btn ghost sm" id="setupClose">稍后</button>
   </div>
   <div class="card" style="max-width:780px">
     <div>
-      <!-- 步骤 1：选组件 -->
       <div id="setupStep1">
         <div class="sub" id="setupNote" style="margin-top:0">想装什么就装什么 —— 每项都写清了"装了能得到什么 / 不装会怎样"。只有标「必需」的三项是真的不可省。</div>
 
@@ -393,14 +324,12 @@
         </details>
       </div>
 
-      <!-- 步骤 2：安装中 -->
       <div id="setupStep2" hidden>
         <div class="bar"><div id="setupBar"></div></div>
         <div class="engineline" id="setupStatus"></div>
         <div class="log" id="setupLog" style="margin-top:14px"></div>
       </div>
 
-      <!-- 步骤 3：完成 -->
       <div id="setupStep3" hidden>
         <div id="setupResult"></div>
       </div>
@@ -416,51 +345,76 @@
   </div>
 </div>
 
-
 <footer>
   <div class="paths" id="footPaths"></div>
-  <div class="lnks">
-    <a href="#" id="footSettings">设置</a>
-    <a href="#" id="footOpenDocs">使用说明</a>
-    <span>关闭本页不影响后台任务，刷新即可恢复状态</span>
-  </div>
+  <div class="lnks"><span>关闭本页不影响后台任务，刷新即可恢复状态</span></div>
 </footer>
 
 </div><!-- /wrap -->
 </main>
+
+<!-- ============================================================
+     底部播放器：全站唯一的一个，任何页面都在同一位置
+     练习页只是多展开一行练习工具
+     ============================================================ -->
+<div class="player" id="dqPlayer" hidden role="region" aria-label="播放器">
+  <div class="player-row">
+    <details class="menu" id="dqSongMenu">
+      <summary class="songbtn" id="dqSongBtn" title="当前曲目 · 点开换一首">
+        <span class="sname" id="dqSongName">—</span>
+        <svg class="sicon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M4 6.5 8 10.5 12 6.5"/></svg>
+      </summary>
+      <div class="menu-pop" id="dqSongList"></div>
+    </details>
+
+    <button class="tplay" id="dqPlay" title="播放 / 暂停（空格）">▶</button>
+    <div class="ttime"><span id="dqCur">0:00</span><span class="sep">/</span><span id="dqDur">0:00</span></div>
+    <div class="tscrub" id="dqScrub" title="拖动定位（也可直接点谱面）">
+      <div class="trange" id="pmRange"></div>
+      <div class="tfill" id="dqFill"></div><div class="thead" id="dqHeadPtr"></div>
+    </div>
+    <div class="seg srcseg" id="dqSrc" role="group" aria-label="音源">
+      <button data-src="mix" class="on" title="原曲音频：拍点就是从它算出来的，跟谱最准">原曲</button>
+      <button data-src="drum" title="按识别结果合成的鼓声">鼓声</button>
+    </div>
+    <div class="seg rateseg" id="dqRate" role="group" aria-label="播放速度">
+      <button data-rate="0.5" title="半速">0.5×</button>
+      <button data-rate="0.75" title="四分之三速">0.75×</button>
+      <button data-rate="1" class="on" title="原速">1×</button>
+    </div>
+    <button class="btn ghost sm" id="dqPracticeBtn" title="进练习页：变速、区间循环、预备拍">练习</button>
+  </div>
+
+  <div class="player-row player-tools" id="dqTools" hidden>
+    <span class="pm-lab">区间</span>
+    <div class="pm-loop">
+      <button class="btn sm" id="pmSetA" title="把当前小节设为区间起点（[）">A 起点</button>
+      <button class="btn sm" id="pmSetB" title="把当前小节设为区间终点（]）">B 终点</button>
+      <button class="btn sm" id="pmLoop" disabled title="开关区间循环（L）">循环</button>
+      <button class="btn ghost sm" id="pmClear">清除</button>
+    </div>
+    <span class="pm-lab">重复</span>
+    <div class="seg pm-repeat" id="pmRepeat" role="group" aria-label="重复次数">
+      <button data-repeat="0" class="on">∞</button>
+      <button data-repeat="3">3</button>
+      <button data-repeat="5">5</button>
+      <button data-repeat="10">10</button>
+    </div>
+    <button class="btn ghost sm" id="pmCountIn" title="先用一小节预备拍倒数，再开始">预备拍</button>
+    <span class="pm-state" id="pmState">第 – 小节</span>
+  </div>
+
+  <audio id="dqAudio" preload="metadata"></audio>
+  <audio id="resAudio" preload="metadata"></audio>
+</div>
+
 </div><!-- /stage -->
 </div><!-- /shell -->
-
-
-<!-- ============ 鼓谱 PDF 预览（服务端渲染成图片，不依赖浏览器 PDF 插件） ============ -->
-<div class="modal" id="pdfModal" hidden role="dialog" aria-modal="true" aria-label="鼓谱预览">
-  <div class="modal-box" style="max-width:1040px">
-    <div class="modal-head">
-      <h2 id="pdfTitle">鼓谱 PDF</h2>
-      <div class="pv-tools">
-        <span class="pv-group">
-          <button class="btn ghost sm" id="pvPrev" title="上一页">‹</button>
-          <span class="pv-page" id="pvPage">– / –</span>
-          <button class="btn ghost sm" id="pvNext" title="下一页">›</button>
-        </span>
-        <select class="inp pv-zoom" id="pvZoom" title="缩放">
-          <option value="100">适应宽度</option>
-          <option value="140">高清</option>
-          <option value="200">放大</option>
-        </select>
-        <button class="btn sm" id="pvOpenSys">用系统阅读器打开</button>
-        <a class="btn sm" id="pvSave" href="#">保存 PDF</a>
-        <button class="btn ghost sm" id="pdfClose">关闭</button>
-      </div>
-    </div>
-    <div class="modal-body pv-body" id="pvBody"><img id="pvImg" alt="鼓谱页面"></div>
-  </div>
-</div>
 
 <div class="cmdk" id="cmdk" hidden>
   <div class="cmdk-box" role="dialog" aria-modal="true" aria-label="命令面板">
     <input id="cmdkInput" class="cmdk-input" type="text" autocomplete="off" spellcheck="false"
-           placeholder="输入命令：新建 / 队列 / 谱面库 / 设置 …">
+           placeholder="输入命令：新建 / 练习 / 队列 / 谱面库 / 设置 …">
     <div class="cmdk-list" id="cmdkList" role="listbox" aria-label="可用命令"></div>
     <div class="cmdk-foot">↑↓ 选择 · Enter 执行 · Esc 关闭 · Ctrl/⌘ + K 唤起</div>
   </div>

@@ -129,6 +129,8 @@ main{flex:1;overflow-y:auto;min-height:0}
 
 /* 页面标题 */
 .pagetitle{display:flex;align-items:flex-end;gap:10px;margin:0 auto var(--s4);max-width:980px}
+/* 只有操作、没有标题的行（页面名已经在上方工具栏里，不重复） */
+.pagetitle.acts{justify-content:flex-end;align-items:center;gap:var(--s2);margin-bottom:var(--s3);min-height:28px}
 /* 设置/向导页：标题与卡片必须同宽，否则左右各错 80/100px */
 #setModal .pagetitle,#setModal .card{max-width:820px}
 #setupModal .pagetitle,#setupModal .card{max-width:780px}
@@ -300,12 +302,6 @@ h1{font-size:22px;font-weight:600;letter-spacing:-.2px}
 #viewDone.slim{margin-bottom:var(--s4)}
 #viewDone .donehead{margin-bottom:0}
 
-.dlrow{display:flex;align-items:center;gap:var(--s3);padding:11px 0;border-bottom:1px solid var(--sep)}
-.dlrow:last-child{border-bottom:0}
-.dlrow .dname{display:flex;align-items:center;gap:8px;flex:1;min-width:0}
-.dlrow .nm{font-family:var(--mono);font-size:12.5px;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dlrow .dm{font-family:var(--mono);font-size:11.5px;color:var(--ink-3);white-space:nowrap}
-
 .hrow{display:flex;align-items:center;gap:var(--s3);padding:10px 0;border-bottom:1px solid var(--sep)}
 .hrow:last-child{border-bottom:0}
 .hrow .hthumb{width:34px;height:44px;object-fit:cover;border-radius:5px;background:var(--bg-sunken);flex:none;cursor:pointer;box-shadow:0 0 0 .5px rgba(0,0,0,.10)}
@@ -335,19 +331,71 @@ h1{font-size:22px;font-weight:600;letter-spacing:-.2px}
 .sh-tools{margin-left:auto;display:flex;align-items:center;gap:var(--s2);flex-wrap:wrap}
 .pgnav{display:inline-flex;align-items:center;gap:2px}
 .pgnav .pv-page{min-width:48px;text-align:center;font-family:var(--mono);font-size:11.5px;color:var(--ink-2)}
-.scorecard[data-explicit="1"] .prod,
-.scorecard[data-explicit="1"] .logwrap{display:none}
 
-.transport{
-  position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:45;
-  display:flex;align-items:center;gap:var(--s3);
-  width:min(720px,calc(100vw - 48px));
+/* 底部播放器：全站唯一（扒谱页 / 练习页 / 谱面库共用同一个） */
+.player{
+  position:fixed;bottom:16px;z-index:45;
+  /* 在「内容区」里居中，而不是整个视口 —— 否则会被侧栏推得偏左 */
+  left:calc(50% + var(--side-w) / 2);transform:translateX(-50%);
+  width:min(980px,calc(100vw - var(--side-w) - 48px));
   padding:10px 14px;border-radius:var(--r-l);
-  background:rgba(255,255,255,.92);
+  background:rgba(255,255,255,.94);
   -webkit-backdrop-filter:saturate(180%) blur(18px);
   backdrop-filter:saturate(180%) blur(18px);
-  box-shadow:var(--sh-float);border:1px solid var(--sep)
+  box-shadow:var(--sh-float);border:1px solid var(--sep);
+  display:flex;flex-direction:column
 }
+.player-row{display:flex;align-items:center;gap:var(--s2)}
+.player .seg{flex:none}
+.player .seg button{white-space:nowrap}
+.player .tscrub{min-width:44px}
+.player-tools{padding-top:9px;margin-top:9px;border-top:1px solid var(--sep);flex-wrap:wrap;gap:7px}
+.songbtn{
+  display:flex;align-items:center;gap:6px;height:var(--h-s);max-width:200px;
+  flex:0 1 auto;min-width:0;
+  padding:0 8px;border-radius:8px;background:var(--bg-sunken);
+  color:var(--ink);font-size:12.5px;font-weight:500;cursor:pointer
+}
+.songbtn:hover{background:var(--bg-active)}
+.songbtn .sname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.songbtn .sicon{width:13px;height:13px;flex:none;color:var(--ink-3)}
+.songbtn:focus-visible{outline:none;box-shadow:0 0 0 3px var(--accent-ring)}
+.rateseg{height:var(--h-s)}
+.rateseg button{font-size:11.5px;padding:0 8px;min-width:34px}
+#dqPracticeBtn{flex:none}
+
+/* 下拉菜单（details/summary 实现，不需要额外 JS 就能键盘操作） */
+.menu{position:relative;display:inline-flex}
+.menu>summary{list-style:none;cursor:pointer}
+.menu>summary::-webkit-details-marker{display:none}
+.menu-pop{
+  position:absolute;z-index:70;top:calc(100% + 6px);left:0;min-width:230px;
+  background:var(--bg);border:1px solid var(--sep);border-radius:var(--r-m);
+  box-shadow:var(--sh-pop);padding:6px;display:flex;flex-direction:column;
+  max-height:56vh;overflow:auto
+}
+.menu-pop.menu-right,.menu-right>.menu-pop{left:auto;right:0}
+#dqSongMenu>.menu-pop{top:auto;bottom:calc(100% + 8px);left:0;right:auto;min-width:260px}
+.menu-sec{font-size:10.5px;font-weight:600;letter-spacing:.5px;text-transform:uppercase;color:var(--ink-3);padding:5px 10px 3px}
+.menu-sep{height:1px;background:var(--sep);margin:5px 0}
+.menu-item{
+  display:flex;align-items:center;gap:8px;width:100%;padding:8px 10px;
+  border:0;border-radius:7px;background:transparent;color:var(--ink);
+  font:500 12.5px var(--font);cursor:pointer;text-align:left;text-decoration:none
+}
+.menu-item:hover{background:var(--bg-hover);text-decoration:none}
+.menu-item .mi-meta{margin-left:auto;font:400 11px var(--mono);color:var(--ink-3);white-space:nowrap}
+.menu-item .mi-sub{font-size:11px;color:var(--ink-3);font-weight:400}
+
+/* 选歌卡里的「高级选项」折叠 */
+.adv{margin-top:14px;border:1px solid var(--sep);border-radius:var(--r-m);background:var(--bg-sunken)}
+.adv>summary{display:flex;align-items:center;gap:8px;padding:10px 14px;cursor:pointer;list-style:none;font-size:12.5px;font-weight:500;color:var(--ink-2)}
+.adv>summary::-webkit-details-marker{display:none}
+.adv>summary .adv-sub{font-size:11.5px;color:var(--ink-3);font-weight:400}
+.adv>summary::after{content:"▾";margin-left:auto;color:var(--ink-3);font-size:11px}
+.adv[open]>summary{border-bottom:1px solid var(--sep);color:var(--ink)}
+.adv[open]>summary::after{content:"▴"}
+.adv-body{background:var(--bg);padding:var(--s4);display:flex;flex-direction:column;gap:var(--s3);border-radius:0 0 var(--r-m) var(--r-m)}
 .tplay{
   width:34px;height:34px;border-radius:50%;border:0;background:var(--accent);color:#fff;
   font-size:11px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex:none;
@@ -358,8 +406,9 @@ h1{font-size:22px;font-weight:600;letter-spacing:-.2px}
 .ttime .sep{color:var(--ink-3);margin:0 3px}
 .tscrub{flex:1;height:20px;position:relative;display:flex;align-items:center;cursor:pointer;min-width:70px;touch-action:none}
 .tscrub::before{content:"";position:absolute;left:0;right:0;height:4px;border-radius:2px;background:var(--bg-active)}
-.tfill{position:absolute;left:0;height:4px;border-radius:2px;background:var(--accent);width:0}
-.thead{position:absolute;width:11px;height:11px;border-radius:50%;background:#fff;box-shadow:0 0 0 .5px rgba(0,0,0,.18),0 1px 3px rgba(0,0,0,.25);margin-left:-5.5px;left:0}
+.tfill{position:absolute;left:0;height:4px;border-radius:2px;background:var(--accent);width:0;z-index:2}
+.trange{position:absolute;left:0;height:4px;border-radius:2px;background:rgba(11,124,116,.42);width:0;display:none;z-index:1}
+.thead{position:absolute;width:11px;height:11px;border-radius:50%;background:#fff;box-shadow:0 0 0 .5px rgba(0,0,0,.18),0 1px 3px rgba(0,0,0,.25);margin-left:-5.5px;left:0;z-index:3}
 .srcseg{height:var(--h-s)}
 .srcseg button{font-size:11.5px;padding:0 10px}
 
@@ -373,28 +422,13 @@ h1{font-size:22px;font-weight:600;letter-spacing:-.2px}
 .paper.pagefit .pg{height:calc(100vh - 300px);max-width:none}
 .paper.pagefit .pg img{height:100%;width:auto}
 
-.barnav{display:flex;align-items:center;gap:var(--s2);padding:8px 0;border-top:1px solid var(--sep);font-size:12px;color:var(--ink-2);flex-wrap:wrap}
-.barnav .bn-lab{font-family:var(--mono);font-size:11.5px;color:var(--ink-3);white-space:nowrap}
-.barnav b{font-family:var(--mono);font-weight:600;color:var(--ink);font-size:12px}
-.barnav .sp{flex:1}
-.barnav audio{display:none}
-.prod{padding-top:var(--s2)}
-.scorebox{border:0}
-.player{display:none}
+.baraxis{display:flex;align-items:center;gap:var(--s2);padding:8px 0;border-top:1px solid var(--sep);font-size:12px;color:var(--ink-2);flex-wrap:wrap}
+.baraxis .bx-lab{font-family:var(--mono);font-size:11.5px;color:var(--ink-3);white-space:nowrap}
+.baraxis b{font-family:var(--mono);font-weight:600;color:var(--ink);font-size:12px}
+.baraxis .sp{flex:1}
 
-/* ============================== 弹窗 ============================== */
-.modal{position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.32);backdrop-filter:blur(2px);display:flex;align-items:center;justify-content:center;padding:var(--s6)}
-.modal-box{background:var(--bg);border-radius:var(--r-l);box-shadow:var(--sh-float);width:100%;max-height:88vh;display:flex;flex-direction:column;overflow:hidden}
-.modal-head{display:flex;align-items:center;gap:var(--s3);padding:14px var(--s5);border-bottom:1px solid var(--sep);flex:none}
-.modal-head h2{font-size:15px;font-weight:600;margin-right:auto}
-.modal-body{padding:var(--s5);overflow-y:auto}
-.modal-foot{display:flex;align-items:center;gap:var(--s2);padding:12px var(--s5);border-top:1px solid var(--sep);background:var(--bg-sunken);flex:none}
-.pv-tools{display:flex;align-items:center;gap:var(--s2);flex-wrap:wrap}
-.pv-group{display:inline-flex;align-items:center;gap:2px}
+/* ============================== 设置 / 向导 ============================== */
 .pv-page{min-width:48px;text-align:center;font-family:var(--mono);font-size:11.5px;color:var(--ink-2)}
-.pv-body{background:var(--bg-sunken);display:flex;justify-content:center;overflow:auto}
-.pv-body img{display:block;max-width:100%}
-.pv-zoom{width:auto}
 .caplist{display:flex;flex-wrap:wrap;gap:6px}
 .cap{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;padding:4px 9px;border-radius:7px;background:var(--bg-sunken);color:var(--ink-2)}
 .cap.ok{background:var(--ok-bg);color:var(--ok)}
@@ -490,14 +524,15 @@ footer a:hover{color:var(--accent)}
 .comp.ready{background:transparent}
 .comp.ready .cn{color:var(--ink)}
 
-/* ---- 弹窗矮屏兜底 ---- */
-@media (max-height:560px){
-  .modal{padding:var(--s3);align-items:flex-start}
-  .modal-box{max-height:calc(100vh - 24px)}
-}
-
 /* ---- 文件选择区：键盘也能用 ---- */
 .drop:focus-visible{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-ring)}
+
+/* ---- 选歌态：三步说明（新手第一眼就知道会发生什么） ---- */
+.quicksteps{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--s3);margin-top:var(--s4)}
+.quicksteps .qs{display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:var(--r-s);background:var(--bg-sunken);color:var(--ink-2);font-size:12.5px}
+.quicksteps .qs b{flex:none;width:18px;height:18px;border-radius:50%;background:var(--accent-bg);color:var(--accent-ink);
+  font:600 11px/18px var(--mono);text-align:center}
+@media (max-width:820px){.quicksteps{grid-template-columns:1fr}}
 
 /* ---- 队列页 ---- */
 .qlist{margin-top:var(--s2)}
@@ -546,63 +581,26 @@ footer a:hover{color:var(--accent)}
 
 
 /* ============================== 练习页 ============================== */
-#pagePractice{padding-bottom:200px}          /* 给固定控制台留位置 */
-.pm-title .sub{color:var(--ink-3)}
-.pm-title select.inp{width:auto;max-width:280px}
+#pagePractice{padding-bottom:170px}          /* 给底部播放器留位置 */
+#pmHost:empty{display:none}
 
-/* 谱面卡在练习页里的形态：去掉产物与日志，只留谱面 */
+/* 谱面卡在练习页里的形态：谱面照旧，练习工具挪进底部播放器 */
 .scorecard.practice{margin-bottom:0}
-.scorecard.practice .prod,
-.scorecard.practice .logwrap{display:none}
-.scorecard.practice .transport{display:none}      /* 用练习控制台代替 */
-/* 练习页已有自己的标题，卡片头只保留右侧的翻页与清晰度 */
-.scorecard.practice .score-head h1,
-.scorecard.practice .score-head .sh-sub,
-.scorecard.practice .score-head .sh-hist{display:none}
 .scorecard.practice .score-head{padding-bottom:8px}
+.scorecard.practice .score-head .sh-hist{display:none}
 
-/* 控制台：固定在底部，两行 + 一行状态 */
-.pm-console{
-  position:fixed;bottom:16px;z-index:45;
-  /* 在「内容区」里居中，而不是整个视口 —— 否则会被侧栏推得偏左 */
-  left:calc(50% + var(--side-w) / 2);transform:translateX(-50%);
-  width:min(980px,calc(100vw - var(--side-w) - 48px));
-  background:rgba(255,255,255,.94);
-  -webkit-backdrop-filter:saturate(180%) blur(18px);
-  backdrop-filter:saturate(180%) blur(18px);
-  border:1px solid var(--sep);border-radius:var(--r-l);box-shadow:var(--sh-float);
-  padding:12px 16px 10px;display:flex;flex-direction:column;gap:10px
-}
-.pm-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-.pm-row+.pm-row{padding-top:10px;border-top:1px solid var(--sep)}
-.pm-play{
-  width:38px;height:38px;border-radius:50%;border:0;background:var(--accent);color:#fff;
-  font-size:13px;cursor:pointer;flex:none;display:flex;align-items:center;justify-content:center;
-  transition:background var(--dur) var(--ease)
-}
-.pm-play:hover{background:var(--accent-ink)}
-.pm-time{font:400 12px var(--mono);color:var(--ink-2);white-space:nowrap;font-variant-numeric:tabular-nums}
-.pm-time .sep{color:var(--ink-3);margin:0 3px}
-.pm-scrub{flex:1;min-width:80px;height:20px;position:relative;cursor:pointer;touch-action:none}
-.pm-scrub::before{content:"";position:absolute;left:0;right:0;top:7px;height:5px;border-radius:3px;background:var(--bg-active)}
-.pm-fill{position:absolute;left:0;top:7px;height:5px;border-radius:3px;background:var(--accent);width:0}
-.pm-src{height:28px}
-.pm-src button{font-size:11.5px;padding:0 10px}
+/* 练习工具行（住在播放器里的第二行） */
 .pm-lab{font-size:11.5px;color:var(--ink-3);flex:none}
-.pm-rate button,.pm-repeat button{font-size:11.5px;padding:0 9px;height:28px;min-width:36px}
+.pm-repeat button{font-size:11.5px;padding:0 9px;height:28px;min-width:34px}
 .pm-loop{display:flex;gap:6px}
 .pm-loop .btn{height:28px;font-size:12px}
-.pm-strip{position:relative;flex:1;min-width:120px;height:20px;cursor:pointer}
-.pm-strip::before{content:"";position:absolute;left:0;right:0;top:8px;height:4px;border-radius:2px;background:var(--bg-active)}
-.pm-strip-range{position:absolute;top:8px;height:4px;border-radius:2px;background:var(--accent);opacity:.45;display:none}
-.pm-strip-head{position:absolute;top:3px;width:2px;height:14px;background:var(--ink-2);left:0}
-.pm-status{font-size:11.5px;color:var(--ink-3)}
-.pm-status .pm-state{color:var(--ink-2);font-family:var(--mono)}
-.pm-status .pm-progress{font-family:var(--mono);color:var(--accent-ink);font-weight:600}
-.pm-hint{color:var(--ink-3)}
-.shell.focus .pm-console{left:50%;width:min(980px,calc(100vw - 48px))}
+.pm-state{font-family:var(--mono);font-size:11.5px;color:var(--ink-2);white-space:nowrap;margin-left:auto}
+
+.shell.focus .player{left:50%;width:min(980px,calc(100vw - 48px))}
 @media (max-width:820px){
-  .pm-hint{display:none}
-  .pm-console{width:calc(100vw - 24px);padding:10px 12px 8px}
-  #pagePractice{padding-bottom:230px}
+  /* 侧栏在 820 以下才变成顶部横条；在那之前播放器必须让开侧栏，否则会盖住底部导航 */
+  .player{left:50%;width:calc(100vw - 24px);padding:9px 11px}
+  .songbtn{max-width:120px}
+  #pagePractice{padding-bottom:210px}
+  .pm-state{margin-left:0}
 }

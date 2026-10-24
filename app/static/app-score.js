@@ -7,12 +7,19 @@
   function syncCardVisibility() {
     var card = el('dqScore');
     if (!card) return;
-    if (st.practice) { card.hidden = false; return; }
+    if (st.practice) { card.hidden = false; syncPlayerVisibility(); return; }
     var ready = card.dataset.ready === '1';
     var done = el('viewDone');
     var doneOn = !!(done && !done.hidden);
     var explicit = card.dataset.explicit === '1';
     card.hidden = !(ready && (doneOn || explicit));
+    syncPlayerVisibility();
+  }
+  /* 播放器跟着谱面一起出现：看得见谱面就看得见播放器，反之亦然（只有这一条规则） */
+  function syncPlayerVisibility() {
+    var p = el('dqPlayer'), card = el('dqScore');
+    if (!p) return;
+    p.hidden = !(st.song && card && !card.hidden);
   }
   window.dqSyncCard = syncCardVisibility;
   var st = {
@@ -215,20 +222,14 @@
     var h = document.querySelector('header.top');
     return h ? Math.round(h.getBoundingClientRect().height) : 52;
   }
-  /* 悬浮播放器在底部占掉的高度（含与底边的间距） */
+  /* 底部播放器在视口里占掉的高度（含与底边的间距）。
+     全站只有一个 #dqPlayer，练习时多一行工具它自己会变高，这里不用分支。 */
   function playerH() {
-    if (st.practice) {
-      var pmc = document.getElementById('pmConsole');
-      if (pmc && !pmc.hidden) {
-        var r0 = pmc.getBoundingClientRect();
-        if (r0.height) return Math.round(r0.height) + 24;
-      }
-    }
-    var t = document.querySelector('.transport');
-    if (!t || t.hidden) return 0;
-    var r = t.getBoundingClientRect();      /* 注意：position:fixed 的 offsetParent 恒为 null */
+    var p = el('dqPlayer');
+    if (!p || p.hidden) return 0;
+    var r = p.getBoundingClientRect();      /* 注意：position:fixed 的 offsetParent 恒为 null */
     if (!r.height) return 0;
-    return Math.round(r.height) + 30;
+    return Math.round(r.height) + 32;
   }
 
   /* ---- 柔和跟随滚动 ----
@@ -412,7 +413,9 @@
       sc.chasing = false;
       sc.row = hit.i;
       stopScrollAnim();
-      snapFollow();                /* 换页：一次落位，避免倒着滑一屏 */
+      /* 只有播放中翻页才自动落位。刚打开时用户还没点播放，
+         这里一滚就会把上方的「结果卡」顶出视野，看起来像页面跑偏了。 */
+      if (st.playing) snapFollow();
     } else if (st.playing) {
       scrollToSystem(g, false);    /* 播放中柔和跟随 */
     }
@@ -449,8 +452,10 @@
   function startLoop() { if (!raf) loop(); }
   function stopLoop() { if (raf) { cancelAnimationFrame(raf); raf = 0; } }
 
-  /* 练习模式：A/B 小节循环 —— 到 B 小节末尾就跳回 A 小节开头 */
+  /* 练习模式：A/B 小节循环 —— 到 B 小节末尾就跳回 A 小节开头。
+     区间开关只在练习页存在，退出练习页后不再偷偷回跳。 */
   function checkLoop() {
+    if (!st.practice) return;
     var lp = st.loop;
     if (!lp.on || lp.a == null || lp.b == null) return;
     var a = st.bars[lp.a], b = st.bars[lp.b];
@@ -487,6 +492,7 @@
     el('dqCur').textContent = mmss(t);
     el('dqDur').textContent = mmss(dur);
     paintPdf();
+    if (st.practice) syncPracticeButtons();      /* 练习工具行跟着同一个时钟走 */
   }
   function syncPlay() {
     var a = curAudio(), on = !!(a && !a.paused);
@@ -635,93 +641,60 @@
     st.pageHold = ((window.performance && performance.now) ? performance.now() : Date.now()) + 4000;
   }
 
-  /* ============================ 练习页控制台 ============================ */
-  var pmRaf = 0;
-
-  function pmEl(id) { return document.getElementById(id); }
-
+  /* ============================ 练习工具（播放器的第二行） ============================ */
   function syncPracticeButtons() {
     var lp = st.loop;
-    var st1 = pmEl('pmState');
-    if (st1) {
-      var t = time(), hit = barAt(t);
-      var txt = hit ? ('第 ' + (hit.i + 1) + ' 小节') : '第 – 小节';
+    var s1 = el('pmState');
+    if (s1) {
+      /* 节号已经在谱面下方的小节轴里显示，这里只说区间状态，不重复报小节号 */
+      var txt;
       if (lp.a != null && lp.b != null) {
-        txt += ' · 循环第 ' + (lp.a + 1) + '–' + (lp.b + 1) + ' 小节';
-        if (lp.on) txt += '（第 ' + ((lp.count || 0) + 1) + (lp.repeat ? '/' + lp.repeat : '') + ' 遍）';
+        txt = '区间 ' + (lp.a + 1) + '–' + (lp.b + 1) + ' 小节';
+        if (lp.on) txt += ' · 第 ' + ((lp.count || 0) + 1) + (lp.repeat ? '/' + lp.repeat : '') + ' 遍';
+      } else {
+        txt = '未设区间';
       }
-      st1.textContent = txt;
+      s1.textContent = txt;
     }
-    var lb = pmEl('pmLoop');
+    var lb = el('pmLoop');
     if (lb) {
       var ready = lp.a != null && lp.b != null;
       lb.disabled = !ready;
       lb.classList.toggle('primary', !!lp.on);
       lb.textContent = lp.on ? '循环中' : '循环';
     }
-    var pr = pmEl('pmProgress');
-    if (pr) {
-      pr.textContent = '速度 ' + (st.rate === 1 ? '1×' : st.rate + '×') +
-        (lp.repeat ? ' · 重复 ' + lp.repeat + ' 次' : '');
-    }
-    var a = curAudio();
-    var play = pmEl('pmPlay');
-    if (play) play.textContent = (a && !a.paused) ? '❚❚' : '▶';
-    // 区间条
-    var strip = pmEl('pmStrip'), rng = pmEl('pmStripRange'), head = pmEl('pmStripHead');
-    if (strip && st.bars.length) {
-      var total = totalDur() || 1;
-      var s0 = st.bars[0].start, s1 = st.bars[st.bars.length - 1].end || total;
-      var f = function (x) { return Math.max(0, Math.min(1, (x - s0) / Math.max(0.1, s1 - s0))); };
-      if (head) head.style.left = (f(t) * 100) + '%';
-      if (rng) {
-        if (lp.a != null && lp.b != null) {
-          var pa = f(st.bars[lp.a].start), pb = f(st.bars[lp.b].end || st.bars[lp.b].start + 2);
-          rng.style.display = 'block';
-          rng.style.left = (pa * 100) + '%';
-          rng.style.width = Math.max(0.5, (pb - pa) * 100) + '%';
-        } else { rng.style.display = 'none'; }
+    /* 区间高亮画在播放器那根进度条上（不再单独一条，两页共用同一根） */
+    var rng = el('pmRange');
+    if (rng) {
+      var dur2 = totalDur();
+      var ba = lp.a != null ? st.bars[lp.a] : null;
+      var bb = lp.b != null ? st.bars[lp.b] : null;
+      if (dur2 && ba && bb) {
+        var t0 = ba.start, t1 = bb.end ? bb.end : (bb.start + 2);
+        rng.style.display = 'block';
+        rng.style.left = Math.max(0, t0 / dur2 * 100) + '%';
+        rng.style.width = Math.max(0.4, Math.min(100 - t0 / dur2 * 100, (t1 - t0) / dur2 * 100)) + '%';
+      } else {
+        rng.style.display = 'none';
       }
     }
-    var srcBtns = document.querySelectorAll('#pmSrc button');
-    var hasDrum = !!(el('resAudio') && el('resAudio').getAttribute('src'));
-    Array.prototype.forEach.call(srcBtns, function (b) {
-      b.classList.toggle('on', b.dataset.src === st.src);
-      b.setAttribute('aria-pressed', b.dataset.src === st.src ? 'true' : 'false');
-      if (b.dataset.src === 'drum') b.disabled = !hasDrum;
-    });
-    var rateBtns = document.querySelectorAll('#pmRate button');
-    Array.prototype.forEach.call(rateBtns, function (b) {
-      var on = parseFloat(b.dataset.rate) === st.rate;
-      b.classList.toggle('on', on);
-      b.setAttribute('aria-pressed', on ? 'true' : 'false');
-    });
-    var repBtns = document.querySelectorAll('#pmRepeat button');
-    Array.prototype.forEach.call(repBtns, function (b) {
+    /* 音源：没有鼓声轨时「鼓声」按钮置灰（不能出现"点了没反应"） */
+    syncSrcButtons();
+    /* 重复次数 */
+    Array.prototype.forEach.call(document.querySelectorAll('#pmRepeat button'), function (b) {
       var on = (+b.dataset.repeat) === (lp.repeat || 0);
       b.classList.toggle('on', on);
       b.setAttribute('aria-pressed', on ? 'true' : 'false');
     });
-    var btns = document.querySelectorAll('#pmRate button');
-    Array.prototype.forEach.call(btns, function (b) {
-      b.classList.toggle('on', parseFloat(b.dataset.rate) === st.rate);
-    });
-    var rbtns = document.querySelectorAll('#pmRepeat button');
-    Array.prototype.forEach.call(rbtns, function (b) {
-      b.classList.toggle('on', (+b.dataset.repeat) === (lp.repeat || 0));
-    });
   }
 
-  function pmTick() {
-    if (!st.practice) { pmRaf = 0; return; }
-    var a = curAudio();
-    var t = a ? (a.currentTime || 0) : 0, dur = totalDur();
-    var cur = pmEl('pmCur'), d = pmEl('pmDur'), fill = pmEl('pmFill');
-    if (cur) cur.textContent = mmss(t);
-    if (d) d.textContent = mmss(dur);
-    if (fill) fill.style.width = (dur ? Math.min(1, t / dur) * 100 : 0) + '%';
-    syncPracticeButtons();
-    pmRaf = requestAnimationFrame(pmTick);
+  function syncSrcButtons() {
+    var hasDrum = !!(el('resAudio') && el('resAudio').getAttribute('src'));
+    Array.prototype.forEach.call(document.querySelectorAll('#dqSrc button'), function (b) {
+      b.classList.toggle('on', b.dataset.src === st.src);
+      b.setAttribute('aria-pressed', b.dataset.src === st.src ? 'true' : 'false');
+      if (b.dataset.src === 'drum') b.disabled = !hasDrum;
+    });
   }
 
   /* 预备拍：WebAudio 现场合成咔哒声，一小节（4 拍）后从起点开始 */
@@ -774,45 +747,12 @@
     if (a) { var p = a.play(); if (p && p.catch) p.catch(function () {}); }
   }
 
-  function pmBind() {
-    var play = pmEl('pmPlay');
-    if (play && !play.dataset.b) {
-      play.dataset.b = '1';
-      play.onclick = function () { togglePlay(); };
-    }
-    var scr = pmEl('pmScrub');
-    if (scr && !scr.dataset.b) {
-      scr.dataset.b = '1';
-      var drag = false;
-      var fromEv = function (ev) {
-        var r = scr.getBoundingClientRect();
-        var f = Math.max(0, Math.min(1, (ev.clientX - r.left) / Math.max(1, r.width)));
-        seek(f * (totalDur() || 0));
-      };
-      scr.addEventListener('pointerdown', function (ev) {
-        drag = true; try { scr.setPointerCapture(ev.pointerId); } catch (e) {}
-        fromEv(ev);
-      });
-      scr.addEventListener('pointermove', function (ev) { if (drag) fromEv(ev); });
-      scr.addEventListener('pointerup', function () { drag = false; });
-      scr.addEventListener('pointercancel', function () { drag = false; });
-    }
-    var strip = pmEl('pmStrip');
-    if (strip && !strip.dataset.b) {
-      strip.dataset.b = '1';
-      strip.onclick = function (ev) {
-        var r = strip.getBoundingClientRect();
-        var f = Math.max(0, Math.min(1, (ev.clientX - r.left) / Math.max(1, r.width)));
-        var s0 = st.bars[0].start, s1 = st.bars[st.bars.length - 1].end || totalDur();
-        seek(s0 + f * (s1 - s0));
-      };
-    }
-    Array.prototype.forEach.call(document.querySelectorAll('#pmSrc button'), function (b) {
-      b.onclick = function () { switchSrc(b.dataset.src); syncPracticeButtons(); };
-    });
-    Array.prototype.forEach.call(document.querySelectorAll('#pmRate button'), function (b) {
-      b.onclick = function () { setRate(parseFloat(b.dataset.rate) || 1); syncPracticeButtons(); };
-    });
+  /* 练习工具行只绑练习专属的东西：区间 / 循环 / 重复 / 预备拍。
+     播放、进度、音源、变速都属于播放器本身，由 bindChrome 统一绑一次。 */
+  function bindPracticeTools() {
+    if (el('dqTools').dataset.b) return;
+    el('dqTools').dataset.b = '1';
+
     Array.prototype.forEach.call(document.querySelectorAll('#pmRepeat button'), function (b) {
       b.onclick = function () {
         st.loop.repeat = +b.dataset.repeat || 0;
@@ -820,8 +760,8 @@
         syncPracticeButtons();
       };
     });
-    var sa = pmEl('pmSetA'), sb = pmEl('pmSetB'), sc = pmEl('pmClear'), ci = pmEl('pmCountIn');
-    var lb = pmEl('pmLoop');
+    var sa = el('pmSetA'), sb = el('pmSetB'), sc = el('pmClear'), ci = el('pmCountIn');
+    var lb = el('pmLoop');
     if (lb) lb.onclick = function () {
       st.loop.on = !st.loop.on;
       st.loop.count = 0;
@@ -854,33 +794,41 @@
     };
   }
 
-  /* 进入 / 退出练习：把谱面卡搬到练习页，退出时搬回 */
+  /* 进入 / 退出练习：谱面卡搬到练习页，练习工具行在播放器里展开 */
   var pmHome = null;
   function enterPractice() {
     var card = el('dqScore');
-    var host = pmEl('pmHost');
+    var host = el('pmHost');
     if (!card || !host) return false;
-    pmFillSongs();                       /* 空态时也要能选曲目 */
     if (!card.dataset.ready) return false;
     if (!pmHome) pmHome = { parent: card.parentNode, next: card.nextSibling };
     card.classList.add('practice');
     host.appendChild(card);
     card.hidden = false;
     st.practice = true;
-    pmEl('pmEmpty').hidden = true;
-    pmEl('pmConsole').hidden = false;
-    pmBind();
-    pmFillSongs();
+    el('pmEmpty').hidden = true;
+    el('dqTools').hidden = false;
+    el('dqPracticeBtn').textContent = '退出练习';
+    el('dqPracticeBtn').title = '回到新建扒谱（Esc）';
+    bindPracticeTools();
     syncPracticeButtons();
-    if (!pmRaf) pmTick();
     setTimeout(function () { if (st.layout) { renderPdf(); paintPdf(); snapFollow(); } }, 60);
     return true;
   }
   function exitPractice() {
     var card = el('dqScore');
+    var wasPractice = st.practice;
     st.practice = false;
-    if (pmRaf) { cancelAnimationFrame(pmRaf); pmRaf = 0; }
-    pmEl('pmConsole').hidden = true;
+    cancelCountIn();                     /* 预备拍的咔哒声不能跟着跑到别的页面 */
+    el('dqTools').hidden = true;
+    el('dqPracticeBtn').textContent = '练习';
+    el('dqPracticeBtn').title = '进练习页：变速、区间循环、预备拍';
+    /* 区间循环的开关只在练习页可见，离开就关掉，免得回到扒谱页还在偷偷循环 */
+    if (st.loop.on || st.loop.a != null || st.loop.b != null) {
+      st.loop.on = false; st.loop.a = null; st.loop.b = null; st.loop.count = 0;
+      if (wasPractice && window.dqToast) window.dqToast('已退出练习：区间循环已关闭，速度保持不变');
+    }
+    syncPracticeButtons();               /* 把进度条上的 A–B 高亮一起擦掉 */
     if (card && pmHome && pmHome.parent && card.parentNode !== pmHome.parent) {
       card.classList.remove('practice');
       try {
@@ -892,30 +840,81 @@
     setTimeout(function () { if (st.layout) { renderPdf(); paintPdf(); } }, 60);
   }
 
-  /* 曲目下拉：来自谱面库 */
-  function pmFillSongs() {
-    var sel = pmEl('pmSong');
-    if (!sel || sel.dataset.filled === '1') return;
+  /* 播放器里的曲名菜单：换一首 + 谱面库里已有的曲目 */
+  function setSongName(name) {
+    var n = el('dqSongName');
+    if (n) n.textContent = String(name || '—').replace(/\.[a-z0-9]+$/i, '') || '—';
+  }
+  /* 收起播放器（「再扒一首」时用）：连同这首谱一起卸掉，
+     否则练习页还会把上一首的谱「复活」出来。 */
+  function hidePlayer() {
+    ['dqAudio', 'resAudio'].forEach(function (id) {
+      var a = el(id);
+      if (a) { try { a.pause(); } catch (e) {} }
+    });
+    el('resAudio').removeAttribute('src');
+    st.song = '';
+    st.bars = [];
+    st.layout = null;
+    st.cols = [];
+    st.page = 1;
+    st.key = '';
+    st.hold = true;              /* 「再扒一首」之后别让轮询又把刚卸掉的谱装回来 */
+    st.explicit = false;
+    st.src = 'mix';
+    st.loop = { a: null, b: null, on: false, repeat: st.loop.repeat, count: 0 };
+    cancelCountIn();
+    var card = el('dqScore');
+    if (card) { card.removeAttribute('data-ready'); card.dataset.explicit = ''; }
+    var ov = el('dqOverlay');
+    if (ov) ov.innerHTML = '';
+    var img = el('dqPageImg');
+    if (img) { img.dataset.srcKey = ''; img.dataset.loaded = ''; img.removeAttribute('data-load-page'); img.removeAttribute('src'); }
+    setSongName('');
+    setHist(false, '');
+    syncSrcButtons();
+    syncCardVisibility();
+  }
+  function fillSongMenu() {
+    var box = el('dqSongList');
+    if (!box || box.dataset.filled === '1') return;
     fetch('/api/history', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (list) {
-      var html = '<option value="">选择曲目…</option>';
-      (list || []).forEach(function (it) {
+      var rows = (list || []).map(function (it) {
         var base = it.base || String(it.name || '').replace(/_鼓谱\.pdf$/, '');
-        var safe = String(base).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
-        html += '<option value="' + safe + '">' + safe + '</option>';
-      });
-      sel.innerHTML = html;
-      sel.dataset.filled = '1';
-      sel.onchange = function () {
-        if (!sel.value) return;
-        cancelCountIn();
-        openSong(sel.value, { keepPage: true });    /* 留在练习页 */
+        return base;
+      }).filter(Boolean);
+      var seen = {}, uniq = [];
+      rows.forEach(function (b) { if (!seen[b]) { seen[b] = 1; uniq.push(b); } });
+      var esc = function (s) {
+        return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
       };
-      if (st.song) {
-        var cur = st.song.replace(/\.[a-z0-9]+$/i, '');
-        for (var i = 0; i < sel.options.length; i++) {
-          if (sel.options[i].value === cur) { sel.selectedIndex = i; break; }
-        }
+      var html = '<button class="menu-item" id="dqSongNew">换一首（回到新建扒谱）</button>';
+      if (uniq.length) {
+        var cur = (st.song || '').replace(/\.[a-z0-9]+$/i, '');
+        html += '<div class="menu-sep"></div><div class="menu-sec">谱面库</div>';
+        uniq.slice(0, 40).forEach(function (b) {
+          html += '<button class="menu-item" data-song="' + esc(b) + '">' + esc(b) +
+            (b === cur ? '<span class="mi-meta">当前</span>' : '') + '</button>';
+        });
       }
+      box.innerHTML = html;
+      box.dataset.filled = '1';
+      var nw = el('dqSongNew');
+      if (nw) nw.onclick = function () {
+        el('dqSongMenu').open = false;
+        setHist(false, '');                 /* 先退出「看历史」，否则 pick 卡会被拦掉 */
+        st.explicit = false;
+        if (window.dqShellShow) window.dqShellShow('new');
+        var again = el('againBtn');
+        if (again) again.click();
+      };
+      Array.prototype.forEach.call(box.querySelectorAll('[data-song]'), function (b) {
+        b.onclick = function () {
+          el('dqSongMenu').open = false;
+          cancelCountIn();
+          openSong(b.getAttribute('data-song'), { keepPage: st.practice });   /* 在练习页里换歌就别踹出去 */
+        };
+      });
     }).catch(function () {});
   }
 
@@ -976,7 +975,10 @@
     if (!window.__dqEsc) {
       window.__dqEsc = 1;
       document.addEventListener('keydown', function (ev) {
-        if (ev.key === 'Escape' && shellEl && shellEl.classList.contains('focus')) setFocus(false);
+        if (ev.key === 'Escape' && shellEl && shellEl.classList.contains('focus')) {
+          setFocus(false);
+          ev.stopImmediatePropagation();      /* 一次 Esc 只做一件事：别再顺手退出练习页 */
+        }
       });
     }
 
@@ -991,13 +993,23 @@
       el('dqPageImg').removeAttribute('data-loaded');
       renderPdf();
     };
-    /* ---- 练习模式：变速 / A-B 循环 ---- */
+    /* ---- 播放器里的通用能力：变速 / 进练习 / 换歌 ---- */
     Array.prototype.forEach.call(document.querySelectorAll('#dqRate button'), function (b) {
       b.onclick = function () { setRate(parseFloat(b.dataset.rate) || 1); };
     });
-    var goPm = el('dqGoPractice');
-    if (goPm) goPm.onclick = function () { if (window.dqShellShow) window.dqShellShow('practice'); };
     setRate(st.rate);
+    var pmBtn = el('dqPracticeBtn');
+    if (pmBtn && !pmBtn.dataset.b) {
+      pmBtn.dataset.b = '1';
+      pmBtn.onclick = function () {
+        if (window.dqShellShow) window.dqShellShow(st.practice ? 'new' : 'practice');
+      };
+    }
+    var menu = el('dqSongMenu');
+    if (menu && !menu.dataset.b) {
+      menu.dataset.b = '1';
+      menu.addEventListener('toggle', function () { if (menu.open) fillSongMenu(); });
+    }
 
     el('dqPrevBar').onclick = function () { var h = barAt(time()); goBar(h ? h.i - 1 : 0); };
     el('dqNextBar').onclick = function () { var h = barAt(time()); goBar(h ? h.i + 1 : 0); };
@@ -1035,26 +1047,34 @@
         var cmd = document.getElementById('cmdk');
         if (cmd && !cmd.hidden) return;                 /* 命令面板开着：空格/方向键归它 */
         if (window.__dqCmdkOpen) return;
-        if (tgt && tgt.closest && tgt.closest('button,a,[contenteditable]')) return;   /* 别抢按钮的空格激活 */
-        if (el('dqScore').hidden) return;
-        var scEl = el('dqScore');
-        if (scEl.closest && scEl.closest('.page') && scEl.closest('.page').hidden) return;  /* 不在当前页 */
-        var pm = document.getElementById('pdfModal');
-        if (pm && !pm.hidden) return;                                                  /* PDF 预览开着时交给它 */
-        if (ev.code === 'Space') { ev.preventDefault(); togglePlay(); }
-        else if (!ev.ctrlKey && !ev.metaKey && !ev.altKey && ev.key === '[') {
-          ev.preventDefault(); var pa = pmEl('pmSetA'); if (pa) pa.click();
-        } else if (!ev.ctrlKey && !ev.metaKey && !ev.altKey && ev.key === ']') {
-          ev.preventDefault(); var pb = pmEl('pmSetB'); if (pb) pb.click();
-        } else if (!ev.ctrlKey && !ev.metaKey && !ev.altKey && (ev.key === 'l' || ev.key === 'L')) {
-          ev.preventDefault(); var pl = pmEl('pmLoop'); if (pl && !pl.disabled) pl.click();
-        }
-        else if (ev.key === 'ArrowLeft') {
+        if (tgt && tgt.closest && tgt.closest('button,a,summary,[contenteditable]')) return;   /* 别抢控件自己的空格 */
+        if (el('dqPlayer').hidden) return;                   /* 没有载入的歌：键盘不归播放器 */
+        if (ev.code === 'Space') { ev.preventDefault(); togglePlay(); return; }
+        var cardEl = el('dqScore');
+        if (!cardEl || cardEl.hidden) return;                /* 其余键只在看得见谱面时有用 */
+        if (ev.key === 'ArrowLeft') {
           ev.preventDefault();
           if (st.page > 1) { st.page--; holdPage(); renderPdf(); }
-        } else if (ev.key === 'ArrowRight') {
+          return;
+        }
+        if (ev.key === 'ArrowRight') {
           ev.preventDefault();
           if (st.layout && st.page < st.layout.pages.length) { st.page++; holdPage(); renderPdf(); }
+          return;
+        }
+        if (ev.key === ',' || ev.key === '.') {
+          ev.preventDefault();
+          var h0 = barAt(time());
+          goBar((h0 ? h0.i : 0) + (ev.key === '.' ? 1 : -1));
+          return;
+        }
+        if (!st.practice || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+        if (ev.key === '[') {
+          ev.preventDefault(); var pa = el('pmSetA'); if (pa) pa.click();
+        } else if (ev.key === ']') {
+          ev.preventDefault(); var pb = el('pmSetB'); if (pb) pb.click();
+        } else if (ev.key === 'l' || ev.key === 'L') {
+          ev.preventDefault(); var pl = el('pmLoop'); if (pl && !pl.disabled) pl.click();
         }
       });
     }
@@ -1095,10 +1115,24 @@
       b.classList.toggle('on', b.dataset.src === 'mix');
     });
     if (name !== (window.__dqLastJobSong || '')) el('resAudio').removeAttribute('src');
+    /* 回到本次结果时把「鼓声」轨接回来（去过别的谱再回来也不能丢） */
+    else {
+      var jobAudio = window.__dqJobAudio || '';
+      var ra = el('resAudio');
+      if (jobAudio) { if (ra.getAttribute('src') !== jobAudio) ra.setAttribute('src', jobAudio); }
+      else ra.removeAttribute('src');
+    }
+    syncSrcButtons();                     /* 换歌后「鼓声」按钮的可用性跟着变 */
     disp.x = null; disp.bar = -1; disp.last = 0;
     bindAudio(mix);
     bindAudio(el('resAudio'));
     bindChrome();
+    setSongName(name);
+    var songList = el('dqSongList');
+    if (songList && songList.dataset.filled === '1') {
+      /* 曲目可能有增减（刚扒完一首），下次展开时重新读一次 */
+      songList.dataset.filled = '';
+    }
     el('dqBarTotal').textContent = st.bars.length;
     el('dqStat').textContent = '共 ' + st.bars.length + ' 小节 · 全长 ' + mmss(totalDur()) +
       ' · ♩=' + (Math.round(st.bars[0].bpm || 0) || '—');
@@ -1122,6 +1156,10 @@
     if (st.layout) { renderPdf(); paintPdf(); } else {
       el('dqOverlay').innerHTML = '';
     }
+    syncPracticeButtons();       /* 换歌后清掉进度条上残留的 A–B 高亮 */
+    /* 谱面刚就绪时，如果人已经在练习页（之前是空的），直接把练习接上 */
+    var pp = el('pagePractice');
+    if (pp && !pp.hidden && !st.practice) enterPractice();
     return true;
   }
 
@@ -1136,7 +1174,14 @@
   function load() {
     if (st.explicit) return;             /* 用户正从「最近产物」看历史，别被当前任务顶掉 */
     fetch('/api/status').then(function (r) { return r.json(); }).then(function (s) {
-      if (!s || s.running || !s.song) return;
+      if (!s || !s.song) return;
+      /* 用户点过「再扒一首」：先挂起，等他真的开新任务（或自己打开一首谱）
+         才恢复自动载入，否则会把刚卸掉的谱又装回来 */
+      if (st.hold) {
+        if (!s.running) return;
+        st.hold = false;
+      }
+      if (s.running) return;
       var hasPdf = (s.results || []).some(function (r) { return r.kind === 'pdf'; });
       if (!hasPdf) return;
       var k = s.song + '|' + (s.finished || '');
@@ -1166,6 +1211,7 @@
     if (!card || !name) return;
     var keepPage = !!(opts && opts.keepPage);
     cancelCountIn();
+    st.hold = false;                     /* 用户自己打开一首：恢复自动载入 */
     card.removeAttribute('data-ready');
     syncCardVisibility();
     if (!keepPage && window.dqShellShow) { try { window.dqShellShow('new'); } catch (e) {} }
@@ -1174,22 +1220,39 @@
     fetchScore(name).then(function (res) {
       if (!applyScore(res[0], res[1], name)) {
         st.explicit = false;
-        el('dqWarn').textContent = '这首歌没有找到可用的谱面数据（可能产物被删了）。';
+        var w1 = '这首歌没有找到可用的谱面数据（可能产物被删了）。';
+        el('dqWarn').textContent = w1;
         el('dqWarn').hidden = false;
+        if (window.dqToast) window.dqToast(w1, true);      /* 卡片是隐藏的，警戒条看不见，必须同时提示 */
         return;
       }
       setHist(true, name);
       syncCardVisibility();
       if (st.practice) enterPractice();
+      /* 看的是历史：先把任务态卡片收掉，别让「选歌 / 结果」卡孤零零挂在上面 */
+      ['viewPick', 'viewDone', 'viewFail'].forEach(function (id) {
+        var e = el(id);
+        if (e) e.hidden = true;
+      });
+      /* 滚到这一页最上面那张可见卡（有结论卡就滚到结论卡，否则滚到谱面），
+         别把上面的内容顶出视野 */
+      var tgt = null;
+      ['viewPick', 'viewRun', 'viewDone', 'viewFail', 'dqScore'].forEach(function (id) {
+        var e = el(id);
+        if (!tgt && e && !e.hidden) tgt = e;
+      });
+      var tgtEl = tgt || card;
       var mm = scroller();
-      var rect = card.getBoundingClientRect();
+      var rect = tgtEl.getBoundingClientRect();
       if (mm === document.documentElement) window.scrollTo(0, rect.top + window.scrollY - 12);
       else mm.scrollTop += rect.top - 12;
     }).catch(function (e) {
       st.explicit = false;
       if (window.console) console.error('[dq] 打开谱面失败：', e && (e.stack || e.message || e));
-      el('dqWarn').textContent = '打开这首的谱面失败：' + ((e && e.message) || e);
+      var w2 = '打开这首的谱面失败：' + ((e && e.message) || e);
+      el('dqWarn').textContent = w2;
       el('dqWarn').hidden = false;
+      if (window.dqToast) window.dqToast(w2, true);
     });
   }
 
@@ -1197,12 +1260,16 @@
     st.explicit = false;
     st.key = '';
     setHist(false, '');
+    if (window.dqUndismiss) window.dqUndismiss();       /* 之前的「再扒一首」不再拦着结果 */
+    if (window.dqShowView) window.dqShowView('done');   /* 结论卡立刻回来，不用等 2 秒轮询 */
     load();
   }
 
   window.dqOpen = openSong;
   window.dqEnterPractice = enterPractice;
   window.dqExitPractice = exitPractice;
+  window.dqHidePlayer = hidePlayer;
+  window.dqSyncSrc = syncSrcButtons;      /* 鼓声轨就绪/清空后，让「鼓声」按钮跟着变 */
   window.__dq = { st: st, sc: sc, disp: disp, sys: systemDocRect, sticky: headerH,
     max: scrollMaxH, anchor: followAnchor, follow: scrollToSystem, scroll: scroller };
 

@@ -81,6 +81,13 @@
   function stripExt(n){ return String(n==null?'':n).replace(/\.[^.\/\\]+$/,''); }
   function show(el){ if(el) el.hidden = false; }
   function hide(el){ if(el) el.hidden = true; }
+  /* 选歌态：只在这两处切换「拖拽区 / 已选文件 / 三步说明」 */
+  function syncPickUI(hasSong){
+    var d = $('#drop'), pb = $('#pickedBlock'), qs = $('#quickSteps');
+    if(d) d.hidden = !!hasSong;
+    if(pb) pb.hidden = !hasSong;
+    if(qs) qs.hidden = !!hasSong;
+  }
   function toast(msg, isErr){
     var t = $('#toast');
     t.textContent = msg;
@@ -88,6 +95,7 @@
     clearTimeout(toastTimer);
     toastTimer = setTimeout(function(){ t.className = 'toast'; }, 3200);
   }
+  window.dqToast = toast;      /* 其它模块（谱面 / 队列）复用同一个提示条 */
   function setMark(kind){  /* idle | busy | done | bad */
     var m = $('#mark');
     if(m) m.className = 'statusdot' + (kind === 'idle' ? '' : ' ' + kind);
@@ -95,7 +103,21 @@
 
   /* ================= 视图切换 ================= */
   /* pick | run | done | fail */
+  var _lastHistToast = 0;
   function showView(name){
+    /* 正在看「谱面库」里点开的那首时，任务态卡片（选歌/结果/失败）不属于当前内容，收起来。
+       「进行中」例外：后台任务还在跑，进度卡必须能看见。 */
+    var card = document.getElementById('dqScore');
+    if(card && card.dataset.explicit === '1' && name !== 'run'){
+      if(name === 'done'){
+        var now = Date.now();
+        if(now - _lastHistToast > 15000){
+          _lastHistToast = now;
+          if(window.dqToast) window.dqToast('这次扒谱已经完成 · 点「回到本次结果」看新谱');
+        }
+      }
+      name = 'none';
+    }
     var map = { pick:'#viewPick', run:'#viewRun', done:'#viewDone', fail:'#viewFail' };
     Object.keys(map).forEach(function(k){
       var el = $(map[k]);
@@ -104,6 +126,8 @@
     /* 谱面卡显示与否交给 app-score 的唯一出口决定（练习态也在那里处理） */
     if(window.dqSyncCard) window.dqSyncCard();
   }
+  window.dqShowView = showView;
+  window.dqUndismiss = function(){ dismissedKey = null; sumKey = null; };   /* 「回到本次结果」用 */
 
   /* ================= 设备 ================= */
   function devLabel(pref){
@@ -344,8 +368,7 @@
       /* 空闲 */
       setMark('idle');
       showView('pick');
-      if(curSong){ $('#drop').hidden = true; $('#pickedBlock').hidden = false; }
-      else { $('#drop').hidden = false; $('#pickedBlock').hidden = true; }
+      syncPickUI(!!curSong);
       startEnable(!setupPending);
       return;
     }
@@ -358,8 +381,7 @@
       setMark('idle');
       showView('pick');
       /* 不要把已经选好的文件冲掉 */
-      if(curSong){ $('#drop').hidden = true; $('#pickedBlock').hidden = false; }
-      else { $('#drop').hidden = false; $('#pickedBlock').hidden = true; }
+      syncPickUI(!!curSong);
       startEnable(!setupPending);
       return;
     }
@@ -378,9 +400,7 @@
         '<span class="k">时间</span><span class="v">'+esc(s.finished||'-')+'</span>';
       $('#failMsg').textContent = s.error + (isCancel
         ? '。中间产物已保留，可以直接重试。'
-        : '。下方日志里通常能看到具体原因；也可以直接重试一次。');
-      $('#failLog').textContent = s.log_tail || '';
-      if(first){ var fl = $('#failLogWrap'); if(fl) fl.open = true; }
+        : '。可以直接重试一次；如果反复失败，把程序目录下 app\\job.log 末尾的几行发出来。');
       return;
     }
 
@@ -401,7 +421,6 @@
     $('#failTitle').textContent = '没找到产物文件';
     $('#failMeta').innerHTML = '<span class="k">歌曲</span><span class="v">'+esc(s.song||'-')+'</span>';
     $('#failMsg').textContent = 'output 目录里没有这次的结果（可能被移动或删除了）。可以重试一次。';
-    $('#failLog').textContent = s.log_tail || '';
   }
 
   function renderDone(s){
@@ -420,49 +439,42 @@
     var hasPdf = (s.results||[]).some(function(r){ return r.kind==='pdf'; });
     var hasAudio = (s.results||[]).some(function(r){ return r.kind==='audio'; });
 
-    /* PDF 是第一产物：谱面工作台会直接显示它，这里只留按钮 */
-    if(hasPdf){
-      show($('#openPdfBtn'));
-      $('#openPdfBtn').textContent = '全屏看鼓谱';
-      $('#openPdfBtn').onclick = function(){ openPdf(base); };
-      show($('#savePdfBtn'));
-      $('#savePdfBtn').href = '/api/download?kind=pdf&song='+encodeURIComponent(base);
-    }else{
-      hide($('#openPdfBtn'));
-      hide($('#savePdfBtn'));
-      $('#openPdfBtn').onclick = null;
-    }
-
-    /* 音频是第二产物：鼓声轨喂给谱面工作台的「鼓声」音源 */
+    /* 音频是第二产物：鼓声轨喂给播放器的「鼓声」音源 */
     if(hasAudio){
       var src = '/api/download?kind=audio&song='+encodeURIComponent(s.song)+'&preview=1';
       var au = $('#resAudio');
       if(au.getAttribute('src') !== src) au.src = src;
+      window.__dqJobAudio = src;          /* 去过别的谱再回来，鼓声轨还能接上 */
     }else{
       $('#resAudio').removeAttribute('src');
+      window.__dqJobAudio = '';
     }
+    if(window.dqSyncSrc) window.dqSyncSrc();     /* 「原曲 / 鼓声」按钮可用性跟着产物变 */
 
+    /* 「下载与打开」菜单：所有产物都收在这一处，不再散落三个保存按钮 */
     var label = { pdf:'鼓谱 PDF', xml:'MusicXML', mid:'MIDI', audio:'鼓声音频' };
+    var dl = { pdf:'/api/download?kind=pdf&song=', xml:'/api/download?kind=xml&song=',
+               mid:'/api/download?kind=mid&song=', audio:'/api/download?kind=audio&song=' };
     var html = '';
     (s.results||[]).forEach(function(r){
-      var name = r.name, act = '';
-      if(r.kind === 'pdf'){
-        act = '<button class="btn sm" data-pdf="'+esc(base)+'">查看</button> ' +
-              '<a class="btn sm" href="/api/download?kind=pdf&song='+encodeURIComponent(base)+'">保存</a>';
-      }else if(r.kind === 'audio'){
-        act = '<a class="btn sm" href="/api/download?kind=audio&song='+encodeURIComponent(base)+'">保存音频</a>';
-      }else if(r.kind === 'xml'){
-        act = '<a class="btn sm" href="/api/download?kind=xml&song='+encodeURIComponent(base)+'">保存 MusicXML</a>';
-      }else if(r.kind === 'mid'){
-        act = '<a class="btn sm" href="/api/download?kind=mid&song='+encodeURIComponent(base)+'">保存 MIDI</a>';
-      }
-      html += '<div class="dlrow"><div class="dname">' +
-        '<span class="tag">'+esc(label[r.kind]||r.kind)+'</span>' +
-        '<span class="nm">'+esc(name)+'</span>' +
-        '<span class="dm">'+fmtSize(r.size)+'</span></div>' +
-        '<div>'+act+'</div></div>';
+      if(!dl[r.kind]) return;
+      html += '<a class="menu-item" href="'+dl[r.kind]+encodeURIComponent(base)+'">' +
+        '<span>'+esc(label[r.kind]||r.kind)+'</span>' +
+        '<span class="mi-meta">'+fmtSize(r.size)+'</span></a>';
     });
-    $('#doneList').innerHTML = html;
+    $('#doneFiles').innerHTML = html || '<div class="menu-item" style="cursor:default;color:var(--ink-3)">这次没有产物文件</div>';
+    var sys = $('#openPdfSys');
+    if(sys){
+      if(hasPdf){
+        sys.href = '/api/download?kind=pdf&song='+encodeURIComponent(base);
+        sys.onclick = function(e){ e.preventDefault(); sysPdf(base); };   /* 真的用系统阅读器打开 */
+        sys.hidden = false;
+      }else{
+        sys.hidden = true;
+        sys.onclick = null;
+        sys.removeAttribute('href');
+      }
+    }
   }
 
   function checkStall(s){
@@ -498,8 +510,7 @@
       dismissFinished();   /* 选了新歌：上一次的结果卡片不再自动弹出 */
       $('#pickedName').textContent = j.name;
       $('#pickedMeta').textContent = fmtSize(j.size) + ' · 已就绪';
-      $('#drop').hidden = true;
-      $('#pickedBlock').hidden = false;
+      syncPickUI(true);
       $('#bpm').value = '';
       showView('pick');
       startEnable(!setupPending);
@@ -519,8 +530,8 @@
     dismissedKey = sumKey;          /* 记住被关掉的那次结果 */
     sumKey = null;
     if(clearSong){ curSong = null; curDur = null; }
-    $('#pickedBlock').hidden = true;
-    $('#drop').hidden = false;
+    syncPickUI(false);
+    if(window.dqHidePlayer) window.dqHidePlayer();   /* 「再扒一首」= 从头开始，播放器跟着收起 */
     $('#bpm').value = '';
     showView('pick');
     setMark('idle');
@@ -629,7 +640,7 @@
           '<div class="hname"><div class="nm">'+sb+'</div>' +
           '<div class="hm">'+esc(it.time)+' · '+fmtSize(it.size)+'</div></div>' +
           '<div class="hops">' +
-          (hasPdf ? '<button class="btn sm" data-dyn="'+sb+'">动态谱</button>' +
+          (hasPdf ? '<button class="btn sm" data-dyn="'+sb+'">看谱</button>' +
                     '<button class="btn ghost sm" data-pdf="'+sb+'">PDF</button>' : '') +
           '<button class="btn ghost sm" data-play="'+sb+'">▶ 试听</button>' +
           '<button class="btn ghost sm" data-artifacts="'+sb+'">产物…</button>' +
@@ -642,7 +653,7 @@
         var b = img.dataset.thumb;
         img.onerror = function(){ img.dataset.empty = '1'; };
         img.onclick = function(){
-          if(window.dqOpen) window.dqOpen(b); else openPdf(b);
+          if(window.dqOpen) window.dqOpen(b); else sysPdf(b);
         };
         img.src = '/api/pdf/page?song='+encodeURIComponent(b)+'&page=1&dpi=40';
       });
@@ -771,60 +782,32 @@
     a.play();
   }
 
-  /* ================= 鼓谱 PDF 预览（服务端渲染成图） ================= */
-  var pv = { base: null, page: 1, pages: 0 };
-
-  var _pdfPrevFocus = null;
-  /* 关闭 PDF 预览：隐藏 + 清图 + 焦点归还（aria-modal 要求闭环） */
-  function closePdf(){
-    hide($('#pdfModal'));
-    var im = $('#pvImg'); if(im) im.src = '';
-    var back = _pdfPrevFocus;
-    _pdfPrevFocus = null;
-    if(back && back.focus && document.contains(back)) { try { back.focus(); } catch(e){} }
-  }
-  window.dqClosePdf = closePdf;
-
-  function openPdf(name){
-    _pdfPrevFocus = document.activeElement;
+  /* ================= 用系统阅读器打开 PDF（应用内不再有第二个谱面视图） ================= */
+  function sysPdf(name){
     var base = stripExt(name);
-    pv.base = base; pv.page = 1;
-    fetch('/api/pdf/info?song='+encodeURIComponent(base)).then(function(r){ return r.json(); }).then(function(j){
-      if(!j.ok){
-        toast('没有这份鼓谱 PDF（可能是「只要音频/只要鼓声」模式）：'+(j.error||''), true);
-        return;
-      }
-      pv.pages = j.pages || 1;
-      $('#pdfTitle').textContent = '鼓谱 PDF · ' + base + '（' + pv.pages + ' 页）';
-      $('#pvSave').href = '/api/download?kind=pdf&song='+encodeURIComponent(base);
-      $('#pvOpenSys').onclick = function(){
-        fetch('/api/open', { method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({ path: (cfg && cfg.resolved && cfg.resolved.output ? cfg.resolved.output + '\\\\' + base + '_鼓谱.pdf' : '') })
-        }).then(function(r){ return r.json(); }).then(function(o){
-          if(!o.ok) toast('打不开：'+(o.error||''), true);
-        }).catch(function(e){ toast('打不开：'+e, true); });
-      };
-      show($('#pdfModal'));
-    setTimeout(function(){ var c = $('#pdfClose'); if (c) c.focus(); }, 30);
-      renderPvPage();
-    }).catch(function(e){ toast('读取鼓谱失败：'+e, true); });
+    var out = (cfg && cfg.resolved && cfg.resolved.output) || '';
+    var path = out ? (out.replace(/[\\\/]+$/, '') + '\\' + base + '_鼓谱.pdf') : '';
+    var fallback = function(){
+      var a = document.createElement('a');
+      a.href = '/api/download?kind=pdf&song=' + encodeURIComponent(base);
+      a.rel = 'noopener';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    };
+    if(!path){ fallback(); return; }
+    fetch('/api/open', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ path: path }) })
+      .then(function(r){ return r.json(); })
+      .then(function(o){
+        if(!o || !o.ok){
+          toast('系统阅读器打不开，已改为下载：' + ((o && o.error) || ''), true);
+          fallback();
+        }
+      })
+      .catch(function(){ fallback(); });
   }
-
-  function renderPvPage(){
-    if(!pv.base) return;
-    var dpi = parseInt($('#pvZoom').value, 10) || 100;
-    $('#pvImg').src = '/api/pdf/page?song='+encodeURIComponent(pv.base)+'&page='+pv.page+'&dpi='+dpi;
-    $('#pvPage').textContent = pv.page + ' / ' + pv.pages;
-    $('#pvPrev').disabled = pv.page <= 1;
-    $('#pvNext').disabled = pv.page >= pv.pages;
-    $('#pvBody').scrollTop = 0;
-  }
-  function pvGo(delta){
-    var n = pv.page + delta;
-    if(n < 1 || n > pv.pages) return;
-    pv.page = n;
-    renderPvPage();
-  }
+  window.dqOpenPdfFile = sysPdf;
 
   /* ================= 设置 ================= */
   function renderSettings(){
@@ -1427,11 +1410,11 @@
     var dynBtn = e.target.closest('[data-dyn]');
     if(dynBtn){
       if(window.dqOpen) window.dqOpen(dynBtn.dataset.dyn);
-      else openPdf(dynBtn.dataset.dyn);
+      else sysPdf(dynBtn.dataset.dyn);
       return;
     }
     var pdfBtn = e.target.closest('[data-pdf]');
-    if(pdfBtn){ openPdf(pdfBtn.dataset.pdf); return; }
+    if(pdfBtn){ sysPdf(pdfBtn.dataset.pdf); return; }
     var artBtn = e.target.closest('[data-artifacts]');
     if(artBtn){ toggleArtifacts(artBtn.dataset.artifacts, artBtn); return; }
     var delSong = e.target.closest('[data-delsong]');
@@ -1453,29 +1436,7 @@
     }
   }, true);
 
-  /* 弹窗 */
-  function bindModal(modalSel, closeSel){
-    var m = $(modalSel);
-    $(closeSel).addEventListener('click', function(){ hide(m); });
-    m.addEventListener('click', function(e){ if(e.target === m) hide(m); });
-  }
-  bindModal('#pdfModal', '#pdfClose');
-  /* #setModal / #setupModal 现在是「页面」不是弹窗：点击容器自身=点留白，
-     不能再当成"点遮罩关闭"，否则点标题与卡片之间的空隙整页就没了。 */
-  /* 预览器翻页 / 缩放 / 键盘 */
-  $('#pvPrev').addEventListener('click', function(){ pvGo(-1); });
-  $('#pvNext').addEventListener('click', function(){ pvGo(1); });
-  $('#pvZoom').addEventListener('change', function(){ renderPvPage(); });
-  document.addEventListener('keydown', function(e){
-    var open = !$('#pdfModal').hidden;
-    if(e.key === 'Escape'){
-      if(open){ closePdf(); e.stopPropagation(); }
-      return;                     /* 设置/向导是页面，Esc 不该把它们关掉 */
-    }
-    if(!open) return;
-    if(e.key === 'ArrowLeft'){ pvGo(-1); }
-    if(e.key === 'ArrowRight'){ pvGo(1); }
-  });
+  /* 设置/向导是「页面」不是弹窗：Esc 不关它们（焦点模式的 Esc 归 app-score） */
 
   function openSettings(){
     var box = $('#setModal');
@@ -1484,9 +1445,9 @@
   }
   window.dqLoadModels = loadModels;
   window.dqLoadSetup = function(){ loadSetupStatus(); };
-  $('#settingsBtn').addEventListener('click', openSettings);
-  $('#footSettings').addEventListener('click', function(e){ e.preventDefault(); openSettings(); });
-  $('#footOpenDocs').addEventListener('click', function(e){ e.preventDefault(); toast('使用说明：程序目录下的 使用说明.txt / README.md'); });
+  var _sb = $('#settingsBtn'); if(_sb) _sb.addEventListener('click', openSettings);
+  var _fs = $('#footSettings'); if(_fs) _fs.addEventListener('click', function(e){ e.preventDefault(); openSettings(); });
+  var _fd = $('#footOpenDocs'); if(_fd) _fd.addEventListener('click', function(e){ e.preventDefault(); toast('使用说明：程序目录下的 使用说明.txt / README.md'); });
   $('#saveCfgBtn').addEventListener('click', saveSettings);
   $('#resetCfgBtn').addEventListener('click', function(){
     SET_FIELDS.forEach(function(f){

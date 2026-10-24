@@ -142,8 +142,8 @@
         b.style.marginRight = '8px';
         b.onclick = function () {
           if (a.kind === 'settings') {
-            var s = document.getElementById('settingsBtn');
-            if (s) s.click();
+            if (window.dqOpenSettings) window.dqOpenSettings();
+            else { var s = document.getElementById('settingsBtn'); if (s) s.click(); }
           } else if (a.kind === 'rerun') {
             var body = a.body || {};
             body.song = st && st.song;
@@ -189,6 +189,8 @@
   function collapseBpm() {
     var bpm = document.getElementById('bpm');
     if (!bpm || document.getElementById('dqMore')) return;
+    /* 新版界面已经把 BPM 放进「高级选项」折叠里，别再套一层 */
+    if (bpm.closest('#advOpts')) return;
     var row = bpm.closest('.field') || bpm.parentNode;
     if (!row || !row.parentNode) return;
     var det = document.createElement('details');

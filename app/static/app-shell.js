@@ -14,7 +14,7 @@
   };
   var crumb = {
     new: ['新建扒谱', '把歌变成鼓谱'],
-    practice: ['练习', '慢速 · 循环 · 跟拍'],
+    practice: ['练习', '慢速 · 区间循环 · 预备拍'],
     queue: ['任务队列', '批量排队，跑完一首自动接下一首'],
     library: ['谱面库', '点开就是可播放的谱面'],
     settings: ['设置', '组件 · 模型 · 路径'],
@@ -64,11 +64,29 @@
     b.addEventListener('click', function () { show(b.getAttribute('data-page')); });
   });
 
+  /* 下拉菜单（details.menu）：点空白处收起来，Esc 也收（不拦别的 Esc 行为） */
+  document.addEventListener('mousedown', function (ev) {
+    Array.prototype.forEach.call(document.querySelectorAll('details.menu[open]'), function (d) {
+      if (!d.contains(ev.target)) d.open = false;
+    });
+  });
+  /* 点菜单项本身也收起（下载链接 / 打开目录 / 换歌都算用完一次） */
+  document.addEventListener('click', function (ev) {
+    var item = ev.target.closest && ev.target.closest('.menu-item');
+    if (!item) return;
+    var d = item.closest('details.menu');
+    if (d) setTimeout(function () { d.open = false; }, 0);
+  });
+  document.addEventListener('keydown', function (ev) {
+    if (ev.key !== 'Escape') return;
+    Array.prototype.forEach.call(document.querySelectorAll('details.menu[open]'), function (d) { d.open = false; });
+  });
+
   var s1 = $('sideSettings');   /* 已改成 data-page="settings" 的导航项，这里只做兜底 */
   if (s1 && !s1.getAttribute('data-page')) {
     s1.addEventListener('click', function () { show('settings'); });
   }
-  var pmx = $('pmExit');
+  var pmx = $('pmGoNew');
   if (pmx) pmx.addEventListener('click', function () { show('new'); });
   var sc1 = $('setClose');
   if (sc1) sc1.addEventListener('click', function () { show('new'); });
@@ -78,8 +96,7 @@
   if (sd) sd.addEventListener('click', function () { show('new'); });
   var s2 = $('sideDocs');
   if (s2) s2.addEventListener('click', function () {
-    var a = $('footOpenDocs');
-    if (a) a.click();
+    if (window.dqToast) window.dqToast('使用说明：程序目录下的 使用说明.txt / README.md');
   });
 
   /* 队列待办数挂在侧栏上 */
@@ -133,8 +150,6 @@
 
   document.addEventListener('keydown', function (ev) {
     if ((ev.key === 'p' || ev.key === 'P') && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
-      var pdfm = $('pdfModal');
-      if (pdfm && !pdfm.hidden) return;              /* PDF 预览开着时别抢按键 */
       var t2 = ev.target;
       if (t2 && t2.closest && t2.closest('input,textarea,select,[contenteditable]')) return;
       ev.preventDefault();
@@ -153,13 +168,14 @@
   /* ============================ 命令面板（Ctrl/⌘ + K）============================ */
   var cmds = [
     { k: 'new',     t: '新建扒谱',   s: '选歌、设参数、开始',      run: function () { show('new'); } },
+    { k: 'play',    t: '播放 / 暂停', s: '当前载入的那首（空格）',  run: function () { var b = $('dqPlay'); if (b) b.click(); } },
+    { k: 'practice',t: '练习',       s: '慢速 · 区间循环 · 预备拍', run: function () { show('practice'); } },
     { k: 'queue',   t: '任务队列',   s: '批量排队与进度',          run: function () { show('queue'); } },
     { k: 'library', t: '谱面库',     s: '已扒过的曲子',            run: function () { show('library'); } },
     { k: 'settings',t: '设置',       s: '组件 / 模型 / 路径',      run: function () { show('settings'); } },
     { k: 'setup',   t: '安装向导',   s: '补装缺失组件',            run: function () { show('setup'); } },
     { k: 'refresh', t: '刷新谱面库', s: '重新读取产物目录',        run: function () { refreshLib(); } },
-    { k: 'focus',   t: '切换聚焦模式', s: '隐藏侧栏只看谱面',      run: function () { var b = $('dqFocus'); if (b) b.click(); } },
-    { k: 'pdf',     t: '打开鼓谱 PDF', s: '用系统阅读器打开',      run: function () { var b = $('openPdfBtn'); if (b) b.click(); } }
+    { k: 'focus',   t: '切换聚焦模式', s: '隐藏侧栏只看谱面',      run: function () { var b = $('dqFocus'); if (b) b.click(); } }
   ];
   var ck = { open: false, sel: 0, list: [] };
 
@@ -271,6 +287,8 @@
     }
     if (ev.key === 'Escape' && ck.open) { ev.preventDefault(); ev.stopPropagation(); cmdkClose(); }
     if (ev.key === 'Escape' && !ck.open) {
+      var shell = document.querySelector('.shell');
+      if (shell && shell.classList.contains('focus')) return;   /* 先退出聚焦，再按一次才退练习 */
       var pp = $('pagePractice');
       if (pp && !pp.hidden) { ev.preventDefault(); show('new'); }
     }
