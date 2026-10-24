@@ -104,14 +104,14 @@
   /* ================= 视图切换 ================= */
   /* pick | run | done | fail */
   var _lastHistToast = 0;
-  function showView(name){
+  function showView(name, opts){
     /* 正在看「谱面库」里点开的那首时，任务态卡片（选歌/结果/失败）不属于当前内容，收起来。
        「进行中」例外：后台任务还在跑，进度卡必须能看见。 */
     var card = document.getElementById('dqScore');
     if(card && card.dataset.explicit === '1' && name !== 'run'){
-      if(name === 'done'){
+      if(name === 'done' && opts && opts.fresh){
         var now = Date.now();
-        if(now - _lastHistToast > 15000){
+        if(now - _lastHistToast > 5000){
           _lastHistToast = now;
           if(window.dqToast) window.dqToast('这次扒谱已经完成 · 点「回到本次结果」看新谱');
         }
@@ -406,7 +406,7 @@
 
     if(s.results && s.results.length){
       setMark('done');
-      showView('done');
+      showView('done', { fresh: !!first });
       if(first){
         renderDone(s);
         loadHistory();          /* 这次的成品要立刻出现在「谱面库」里 */
