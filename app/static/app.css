@@ -328,6 +328,14 @@ h1{font-size:22px;font-weight:600;letter-spacing:-.2px}
 .prow .pm{font-family:var(--mono);font-size:11px;color:var(--ink-3);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .prow .pact{display:flex;gap:6px;flex:none}
 .reshint{margin-top:var(--s4);font-size:12px;color:var(--ink-3);line-height:1.6}
+
+/* 设置页底部：作者与反馈方式 */
+.about{display:flex;align-items:center;gap:var(--s5);flex-wrap:wrap;
+  margin-top:var(--s4);padding-top:var(--s3);border-top:1px solid var(--sep);
+  font-size:11.5px;color:var(--ink-3)}
+.about b{font-weight:600;color:var(--ink-2)}
+.about a{color:var(--ink-2);text-decoration:none;border-bottom:1px solid var(--sep-strong)}
+.about a:hover{color:var(--accent-ink);border-bottom-color:var(--accent)}
 @media (max-width:960px){.resgrid{grid-template-columns:1fr;gap:var(--s4)}}
 .shell.focus .resprev-frame{max-height:none}
 .shell.focus .resprev-frame img{max-height:none}

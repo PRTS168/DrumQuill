@@ -395,6 +395,12 @@ run_pipeline.ps1   六步管线主脚本
 - **平台。** 目前只支持 Windows；GPU 加速需要 NVIDIA 显卡。
 - **商用限制。** ADTOF 权重为 CC BY-NC-SA 4.0，禁止商业使用，详见文末许可。
 
+## 反馈
+
+作者：PRTS168　·　反馈邮箱：[1451313905@qq.com](mailto:1451313905@qq.com)
+
+报问题时把歌名和 `app\job.log` 末尾几行一起发来，能快很多；谱面哪里不对，最好附上你对照的官方谱截图。
+
 ## 致谢
 
 - [Demucs](https://github.com/facebookresearch/demucs)（Meta AI Research / adefossez）—— 鼓轨分离模型
