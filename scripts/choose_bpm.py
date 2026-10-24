@@ -27,6 +27,14 @@ def load_ticks(path):
     return {k: np.array(sorted(v)) for k, v in per.items()}
 
 
+def aligned_pairs(per):
+    """把 {pitch: [times]} 展开成 (times, pitches)，整体按时间排序，
+    保证时间与音高下标严格对齐（旧代码时间全局排序、音高按分组展开，下标错位）。"""
+    pairs = sorted((t, p) for p, v in per.items() for t in v)
+    return (np.array([t for t, _ in pairs]),
+            np.array([p for _, p in pairs]))
+
+
 def median_beat_interval(times, bpm_dummy=None):
     """以秒为单位的相邻间隔中位数。"""
     if len(times) < 3:
@@ -153,18 +161,17 @@ def main():
     chosen = best if best["score"] + 0.35 < keep["score"] else keep
 
     # 精细拟合：用"起音贴栅格度"在 ±5% 内细扫（librosa 检测常偏 1~3%）
-    all_times = np.array(sorted(t for v in per.values() for t in v))
+    # 时间与音高整体按时间排序对齐（旧代码下标错位导致 rotation 系统性偏差）
+    all_times, all_pitches = aligned_pairs(per)
     refined_bpm, tight, improve = refine_by_tightness(all_times, chosen["bpm"])
     if improve > 0.12 and abs(refined_bpm - chosen["bpm"]) > 0.05:
         detail = "（起音贴合度 %.3f，微调 %+.2f%%）" % (tight, (refined_bpm / chosen["bpm"] - 1) * 100)
-        rot, _sc = best_rot_continuous(all_times,
-                                       np.array([p for p, v in per.items() for _ in v]),
+        rot, _sc = best_rot_continuous(all_times, all_pitches,
                                        refined_bpm)
     else:
         refined_bpm = chosen["bpm"]
         detail = ""
-        rot, _sc = best_rot_continuous(all_times,
-                                       np.array([p for p, v in per.items() for _ in v]), refined_bpm)
+        rot, _sc = best_rot_continuous(all_times, all_pitches, refined_bpm)
 
     out = {
         "detected": bpm,

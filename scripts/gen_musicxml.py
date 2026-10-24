@@ -122,40 +122,6 @@ def quantize(raw):
 KICK, SNARE, HI, TOM, CYMBAL = 35, 38, 42, 47, 49
 
 
-def groove_score(cells, rot):
-    """给定小节旋转（十六分格数），返回该旋转下的律动合理度。"""
-    score = 0.0
-    for (_bar, tick), pitches in cells.items():
-        pass
-    return score
-
-
-def best_rotation(cells):
-    """枚举 16 种小节旋转，返回 (最优旋转格数, 分数表)。"""
-    grid = BAR_TICKS // CELL
-    scores = []
-    for rot in range(grid):
-        sc = 0.0
-        for (bar, tick), pitches in cells.items():
-            abs_tick = bar * BAR_TICKS + tick
-            g = ((abs_tick - rot * CELL) % BAR_TICKS) // CELL     # 旋转后落在第几格
-            beat = g % 4                                          # 拍内第几个十六分
-            for pitch, _vel in pitches.items():
-                if pitch == KICK:
-                    sc += 1.2 if g == 0 else (1.0 if g == 8 else (0.3 if g % 2 == 0 else 0.0))
-                elif pitch == SNARE:
-                    sc += 1.0 if g in (4, 12) else (0.2 if g in (5, 13) else -0.15)
-                elif pitch == CYMBAL:
-                    sc += 2.0 if g == 0 else (0.6 if g == 8 else -0.6)
-                elif pitch == HI:
-                    sc += 0.5 if g % 2 == 0 else 0.0
-                elif pitch == TOM:
-                    sc += 0.3 if g >= 12 or g <= 1 else 0.0
-        scores.append((round(sc, 3), rot))
-    scores.sort(reverse=True)
-    return scores[0][1], scores
-
-
 SIGMA_CELL = 0.35
 TARGETS = {
     KICK: {0: 1.2, 8: 1.0, 4: 0.4, 12: 0.4},
@@ -400,19 +366,19 @@ def main():
     raw = load_notes(MIDI)
     if not raw:
         raise SystemExit("[!] 输入 MIDI 没有音符")
+    if PLAN:
+        # 必须先按真实拍号定小节长度、再量化：否则非 4/4 会按 4/4 错切小节边界。
+        # CELL 是十六分音符固定长度（120 tick），不随拍号变化，无需重算。
+        globals()["METER"] = int(PLAN.get("meter") or 4)
+        globals()["BAR_TICKS"] = DIV * globals()["METER"]
+        print("拍栅格模式：%d 小节，%d/4，中位速度 %.1f BPM（栅格来自真实拍点，不做相位搜索）"
+              % (int(PLAN.get("n_bars") or 0), METER, float(PLAN.get("bpm_median") or 0)))
     calibrate(raw)
     cells = quantize(raw)
     if not cells:
         raise SystemExit("[!] 量化后没有任何可记谱的鼓件（检查音高映射）")
-    if PLAN:
-        globals()["METER"] = int(PLAN.get("meter") or 4)
-        globals()["BAR_TICKS"] = DIV * globals()["METER"]
-        # 小节来自真实强拍，但拍内相位仍可能有整拍级偏差 -> 用鼓类先验在 16 个偏移里再校一次
-        rot, rot_scores = best_rotation(raw)
-        print("拍栅格模式：%d 小节，%d/4，中位速度 %.1f BPM（栅格来自真实拍点，不做相位搜索）"
-              % (int(PLAN.get("n_bars") or 0), METER, float(PLAN.get("bpm_median") or 0)))
-    else:
-        rot, rot_scores = best_rotation(raw)
+    # 小节来自真实拍点，但拍内相位仍可能有整拍级偏差 -> 用鼓类先验在 16 个偏移里再校一次
+    rot, rot_scores = best_rotation(raw)
     if rot:
         shifted = {}
         for (bar, tick), pitches in cells.items():

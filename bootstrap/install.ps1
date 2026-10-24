@@ -30,8 +30,15 @@ if (Test-Path $CFG_PATH) {
     try { $cfg = Get-Content $CFG_PATH -Raw -Encoding UTF8 | ConvertFrom-Json } catch { $cfg = $null }
 }
 
-# 内置镜像（全部实测可达或作为兜底链）
-$PYPI_MIRROR   = "https://pypi.tuna.tsinghua.edu.cn/simple"
+# PyPI 镜像链：按顺序尝试，单镜像不可达自动换源（口径对齐 installer.py _mirror_order）
+$PYPI_MIRRORS = @(
+    "https://mirrors.cloud.tencent.com/pypi/simple",
+    "https://mirrors.aliyun.com/pypi/simple",
+    "https://pypi.tuna.tsinghua.edu.cn/simple",
+    "https://pypi.mirrors.ustc.edu.cn/simple",
+    "https://pypi.org/simple"
+)
+$PYPI_MIRROR = $PYPI_MIRRORS[0]  # 兼容离线指引等对单变量的引用
 $DEMUCS_URLS   = @(
     "https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/955717e8-8726e21a.th",
     "https://hf-mirror.com/facebook/htdemucs/resolve/main/955717e8-8726e21a.th"
@@ -65,6 +72,18 @@ function Invoke-PyB64 {
     param([string]$Code)
     $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($Code))
     & $venvPy -c "import base64;exec(base64.b64decode('$b64').decode('utf-8'))" 2>$null
+}
+
+# 按镜像顺序尝试 pip install：任一成功即返回 True，全部失败返回 False
+function Invoke-PipInstall {
+    param([string[]]$PipArgs, [int]$TimeoutSec = 60)
+    foreach ($m in $PYPI_MIRRORS) {
+        Write-Host "    pip 源: $m"
+        & $venvPy -m pip install @PipArgs -i $m --timeout $TimeoutSec --retries 2 --prefer-binary 2>$null
+        if ($LASTEXITCODE -eq 0) { return $true }
+        Write-Host "    该源失败，换下一个镜像..."
+    }
+    return $false
 }
 
 # 汇总表
@@ -133,7 +152,7 @@ if (-not $venvOk) {
         }
         if ($created) {
             # 升级 pip（仅 venv 内）
-            & $venvPy -m pip install --upgrade pip -i $PYPI_MIRROR --timeout 30 2>$null
+            $null = Invoke-PipInstall -PipArgs @("--upgrade", "pip") -TimeoutSec 30
             $venvOk = $true
             Add-Status "Python venv" "已创建" "$venvDir"
         } else {
@@ -205,7 +224,9 @@ if (-not $venvPy) {
                 Expand-Archive -Path $zipPath -DestinationPath $ext -Force
                 $sub = Get-ChildItem $ext -Directory | Select-Object -First 1
                 Write-Host "  pip install 源码目录: $($sub.FullName)"
-                & $venvPy -m pip install $sub.FullName -i $PYPI_MIRROR --timeout 30
+                if (-not (Invoke-PipInstall -PipArgs @($sub.FullName) -TimeoutSec 30)) {
+                    $script:failedCount++
+                }
                 Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
                 Remove-Item $ext -Recurse -Force -ErrorAction SilentlyContinue
             } else {
@@ -222,8 +243,10 @@ if (-not $venvPy) {
             $pkgs = $PIP_PKGS
         }
         if ($pkgs.Count -gt 0) {
-            Write-Host "  pip 安装 $($pkgs.Count) 个包（清华镜像）..."
-            & $venvPy -m pip install @pkgs -i $PYPI_MIRROR --timeout 30 --retries 3 --prefer-binary
+            Write-Host "  pip 安装 $($pkgs.Count) 个包（多镜像自动回退）..."
+            if (-not (Invoke-PipInstall -PipArgs $pkgs -TimeoutSec 60)) {
+                Write-Host "  [错误] 所有镜像均安装失败"
+            }
         }
         # 复核
         $probeCode = "import importlib`nmiss=[]`nfor m in [$listLit]:`n    try: importlib.import_module(m)`n    except Exception: miss.append(m)`nprint(' '.join(miss))"

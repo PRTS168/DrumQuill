@@ -15,7 +15,6 @@
 输出末行给出统计，方便在管线日志里看到"到底修了多少"。
 """
 import sys
-import collections
 
 try:
     import pretty_midi

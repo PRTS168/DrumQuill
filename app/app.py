@@ -358,11 +358,13 @@ MODES = {
 }
 
 
-def run_job(song_path, bpm, mode="full"):
+def _try_acquire_job(song_path, bpm, mode):
+    """原子抢占任务槽：空闲则置 running=True 并写基础字段，返回 True；
+    已有任务在跑则返回 False。手动 start 与队列推进共用这道闸，杜绝双开。"""
     global STATE
-    if mode not in MODES:
-        mode = "full"
     with _lock:
+        if STATE["running"]:
+            return False
         STATE["running"] = True
         STATE["song"] = os.path.basename(song_path)
         STATE["bpm"] = bpm
@@ -374,24 +376,47 @@ def run_job(song_path, bpm, mode="full"):
         STATE["error"] = None
         STATE["pid"] = None  # clear stale pid from previous job; set again after Popen
         STATE["service_pid"] = os.getpid()  # 记录是哪个服务实例在跑这个任务
-    STATE["audio_sec"] = _audio_seconds(song_path)
-    open(LOG_FILE, "w", encoding="utf-8").close()
-    write_log("%s  [0/6] 任务启动: %s（模式：%s）"
-              % (time.strftime("%H:%M:%S"), os.path.basename(song_path), MODES[mode]["name"]))
-    with _lock:
-        STATE["cancelled"] = False
-    _save_state()
+        return True
 
-    cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", PS1,
-           "-SongPath", song_path]
-    if bpm:
-        cmd += ["-BPM", str(bpm)]
-    if STATE.get("device_override"):
-        cmd += ["-Device", STATE["device_override"]]
-    cmd += list(MODES[mode]["flags"])
-    env = dict(os.environ)
-    env["PYTHONUTF8"] = "1"
-    env["PYTHONIOENCODING"] = "utf-8"
+
+def run_job(song_path, bpm, mode="full"):
+    """队列推进路径：抢占成功才执行，返回是否真正开跑。"""
+    global STATE
+    if mode not in MODES:
+        mode = "full"
+    if not _try_acquire_job(song_path, bpm, mode):
+        return False
+    return _run_job_body(song_path, bpm, mode)
+
+
+def _run_job_body(song_path, bpm, mode):
+    try:
+        STATE["audio_sec"] = _audio_seconds(song_path)
+        open(LOG_FILE, "w", encoding="utf-8").close()
+        write_log("%s  [0/6] 任务启动: %s（模式：%s）"
+                  % (time.strftime("%H:%M:%S"), os.path.basename(song_path), MODES[mode]["name"]))
+        with _lock:
+            STATE["cancelled"] = False
+        _save_state()
+
+        cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", PS1,
+               "-SongPath", song_path]
+        if bpm:
+            cmd += ["-BPM", str(bpm)]
+        if STATE.get("device_override"):
+            cmd += ["-Device", STATE["device_override"]]
+        cmd += list(MODES[mode]["flags"])
+        env = dict(os.environ)
+        env["PYTHONUTF8"] = "1"
+        env["PYTHONIOENCODING"] = "utf-8"
+    except Exception as e:
+        # 同步准备阶段失败：进程还没启动，必须释放任务槽，否则 running 永久卡死
+        with _lock:
+            STATE["running"] = False
+            STATE["error"] = str(e)
+            STATE["stage_name"] = "启动失败: %s" % e
+        write_log("[x/6] 启动准备失败: %s" % e)
+        raise
 
     def watcher(proc):
         # read stdout line by line, update stage, write log.
@@ -537,9 +562,6 @@ def start():
     mode = (body.get("mode") or "full").strip().lower()
     if mode not in MODES:
         mode = "full"
-    with _lock:
-        if STATE["running"]:
-            return jsonify({"ok": False, "error": "已有任务在运行"}), 409
     if not song:
         return jsonify({"ok": False, "error": "no song"}), 400
     # always resolve against songs_dir(): strip any directory components / traversal
@@ -555,9 +577,27 @@ def start():
     if bpm is not None and not (20 <= bpm <= 400):
         bpm = None
     dev = (body.get("device") or "").strip().lower()
-    STATE["device_override"] = dev if dev in ("cpu", "cuda", "gpu") else None
-    threading.Thread(target=run_job, args=(path, bpm, mode), daemon=True).start()
-    return jsonify({"ok": True, "mode": mode, "device": STATE["device_override"]})
+    device = dev if dev in ("cpu", "cuda", "gpu") else None
+
+    # 抢占在工作线程内原子完成；Event 让本请求同步拿到抢占结果，
+    # 避免"检查通过、起线程前被队列推进插队"的竞态窗口。
+    gate = threading.Event()
+    box = {}
+
+    def _go():
+        acquired = _try_acquire_job(path, bpm, mode)
+        box["ok"] = acquired
+        gate.set()
+        if acquired:
+            with _lock:
+                STATE["device_override"] = device
+            _run_job_body(path, bpm, mode)
+
+    threading.Thread(target=_go, daemon=True).start()
+    gate.wait(timeout=10)
+    if not box.get("ok"):
+        return jsonify({"ok": False, "error": "已有任务在运行"}), 409
+    return jsonify({"ok": True, "mode": mode, "device": device})
 
 
 def _beat_source(song):
@@ -666,7 +706,7 @@ def _stems_root():
 
 
 def _stem_dirs(base):
-    """某首歌在各分离模型下的鼓轨目录（stems\<模型>\<歌曲>）。
+    r"""某首歌在各分离模型下的鼓轨目录（stems\<模型>\<歌曲>）。
 
     切换分离模型后产物会落在不同子目录，产物管理/下载/删除都要跟着模型走，
     不能写死 htdemucs（否则 mdx_extra 作业的中间产物在界面里看不到）。
@@ -845,7 +885,7 @@ def models_download():
 
 @app.route("/api/models/delete", methods=["POST"])
 def models_delete():
-    import installer, models_registry
+    import models_registry
     body = request.get_json(silent=True) or {}
     name = (body.get("model") or "").strip()
     msgs = []
@@ -1468,9 +1508,13 @@ def _advance_body():
     with _lock:
         STATE["device_override"] = nxt.get("device") or None
     try:
-        run_job(path, nxt.get("bpm") or None, nxt.get("mode") or "full")
+        started = run_job(path, nxt.get("bpm") or None, nxt.get("mode") or "full")
     except Exception:
+        started = False
+    if not started:
+        # 抢占失败（手动 start 抢先）或执行抛错：让出，回到待处理
         nxt["state"] = "pending"
+        _queue_save(q)
 
 
 def _mark_queue_state(song, state):
@@ -1526,7 +1570,6 @@ def queue_api():
 # ---------------- ETA ----------------
 def _audio_seconds(path):
     try:
-        ff = cfg_get("ffmpegPath") or "ffmpeg"
         probe = shutil.which("ffprobe") or "ffprobe"
         r = subprocess.run([probe, "-v", "error", "-show_entries", "format=duration",
                             "-of", "default=nw=1:nk=1", path],
@@ -1710,7 +1753,6 @@ def scoremap():
     xml_p = os.path.join(out_dir(), base + ".musicxml")
     if os.path.isfile(xml_p):
         try:
-            import xml.etree.ElementTree as ET
             per_bar = _xml_bars_to_notes(xml_p, len(bars), meter)
             if per_bar is not None:
                 return pack(per_bar)
@@ -1860,7 +1902,6 @@ def _xml_bars_to_notes(xml_path, n_bars, meter):
                 up = el.find("unpitched")
                 if up is not None:
                     step = (up.findtext("display-step") or "").strip().upper()
-                    octv = (up.findtext("display-octave") or "").strip()
                     cls = {"F": "kick", "C": "snare", "G": "hihat",
                            "E": "tom", "A": "cymbal", "D": "tom", "B": "tom"}.get(step, "snare")
                 else:

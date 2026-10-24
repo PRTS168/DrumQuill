@@ -12,10 +12,8 @@
 import os
 import re
 import json
-import shutil
 import subprocess
 import threading
-import time
 
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 FBAI_ROOT = "https://dl.fbaipublicfiles.com/demucs/"
@@ -381,7 +379,6 @@ def delete_model(root, cfg, name, log=print):
 
 
 if __name__ == "__main__":
-    import sys
     root = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
     cfg = {}
     try:

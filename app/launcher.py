@@ -66,7 +66,7 @@ def stamp_path():
 
 
 def app_dir():
-    """项目里 app\ 目录的绝对路径（冻结与源码两种运行方式都要对）。"""
+    r"""项目里 app\ 目录的绝对路径（冻结与源码两种运行方式都要对）。"""
     global _APP_DIR_CACHE
     if _APP_DIR_CACHE:
         return _APP_DIR_CACHE

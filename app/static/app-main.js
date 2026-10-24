@@ -739,7 +739,10 @@
             '<span class="asz">'+fmtSize(x.size)+'</span>' +
             '<span class="atime">'+esc(x.time)+'</span>' +
             '<span class="aops">' + viewBtn + playBtn +
-              '<a class="btn ghost sm" href="/api/download?name='+encodeURIComponent(x.name)+'&song='+encodeURIComponent(base)+'">保存</a>' +
+              // 源音频是用户自己拖入的文件、且后端 download 路由不含 songs_dir，
+              // 渲染"保存"必 404；只保留"定位"（在目录中打开）。
+              (x.kind === 'source' ? '' :
+                '<a class="btn ghost sm" href="/api/download?name='+encodeURIComponent(x.name)+'&song='+encodeURIComponent(base)+'">保存</a>') +
               '<button class="btn ghost sm" data-reveal="'+esc(x.path)+'">定位</button>' +
               '<button class="btn ghost sm" data-delitem="'+esc(x.name)+'" data-delbase="'+esc(base)+'">删除</button>' +
             '</span></div>';

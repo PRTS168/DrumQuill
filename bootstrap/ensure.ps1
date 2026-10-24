@@ -27,7 +27,11 @@ if (Test-Path $CFG_PATH) {
 }
 
 function Test-Ready {
-    $problems = @()
+    # 就绪口径与 installer.py COMPONENTS 对齐：
+    #   Block = required=True（venv / 核心包），缺失无法扒谱
+    #   Warn  = required=False（Demucs 权重 / MuseScore / ffmpeg），缺失只降级、不阻断
+    $block = @()
+    $warn = @()
 
     # venv python
     $venvPy = $null
@@ -36,7 +40,7 @@ function Test-Ready {
     } elseif (Test-Path (Join-Path $ROOT ".venv\Scripts\python.exe")) {
         $venvPy = Join-Path $ROOT ".venv\Scripts\python.exe"
     }
-    if (-not $venvPy) { $problems += "venv 不存在"; return $problems }
+    if (-not $venvPy) { return @{ Block = @("venv 不存在"); Warn = @() } }
 
     # 关键 import（快速探针）
     $miss = & $venvPy -c @"
@@ -48,30 +52,34 @@ for m in ['torch','demucs','adtof_pytorch','librosa','flask']:
 print(' '.join(miss))
 "@ 2>$null
     $miss = ($miss | Select-Object -Last 1)
-    if ($miss.Trim()) { $problems += "Python 包缺失: $miss" }
+    if ($miss.Trim()) { $block += "Python 包缺失: $miss" }
 
-    # Demucs 权重
+    # Demucs 权重（可选，首次运行可下载）
     if (-not (Test-Path (Join-Path $ROOT "models\demucs_local\955717e8-8726e21a.th"))) {
-        $problems += "Demucs 权重缺失"
+        $warn += "Demucs 权重缺失（首次运行可自动下载，分离质量降级）"
     }
-    # MuseScore
+    # MuseScore（可选，有内置渲染兜底）
     $mscore = $null
     foreach ($p in @($env:ProgramFiles, ${env:ProgramFiles(x86)})) {
         if (-not $p) { continue }
         $hit = Get-ChildItem "$p\MuseScore*\bin\MuseScore4.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($hit) { $mscore = $hit.FullName; break }
     }
-    if (-not $mscore) { $problems += "MuseScore 4 未安装" }
-    # ffmpeg
+    if (-not $mscore) { $warn += "MuseScore 4 未安装（将使用内置渲染，排版降级）" }
+    # ffmpeg（可选）
     $ff = Get-Command ffmpeg -ErrorAction SilentlyContinue
     if (-not $ff -and -not (Test-Path (Join-Path $ROOT "tools\ffmpeg\bin\ffmpeg.exe"))) {
-        if (-not ($cfg -and $cfg.ffmpegPath -and (Test-Path $cfg.ffmpegPath))) { $problems += "ffmpeg 缺失" }
+        if (-not ($cfg -and $cfg.ffmpegPath -and (Test-Path $cfg.ffmpegPath))) {
+            $warn += "ffmpeg 缺失（部分音频格式转码可能受限）"
+        }
     }
-    return $problems
+    return @{ Block = $block; Warn = $warn }
 }
 
 $t0 = Get-Date
-$problems = @(Test-Ready)
+$ready = Test-Ready
+$block = @($ready.Block)
+$warn = @($ready.Warn)
 $elapsed = [math]::Round(((Get-Date) - $t0).TotalSeconds, 1)
 
 # 静默启动：交给 app\launcher.py（自身探测 venv/系统 python，pythonw 拉起服务，
@@ -92,8 +100,12 @@ function Start-App {
     }
 }
 
-if ($problems.Count -eq 0) {
-    Write-Host "[就绪] 环境检测通过（耗时 ${elapsed}s）。"
+if ($warn.Count) {
+    Write-Host "[提示] $($warn -join '；')"
+}
+
+if ($block.Count -eq 0) {
+    Write-Host "[就绪] 环境检测通过（耗时 ${elapsed}s；可选组件缺失不影响主流程）。"
     if ($Launch) {
         Write-Host "[启动] 静默拉起服务..."
         Start-App
@@ -101,7 +113,7 @@ if ($problems.Count -eq 0) {
     exit 0
 }
 
-Write-Host "[缺失] $($problems -join '；')"
+Write-Host "[缺失] $($block -join '；')"
 if ($CheckOnly) { exit 1 }
 
 # 缺失时：不再弹黑色安装窗口——优先起服务（系统 python 有 Flask 即可），

@@ -17,10 +17,8 @@ app/installer.py — 组件安装器（引导页 / 设置重装共用）。
 """
 import json
 import os
-import re
 import shutil
 import subprocess
-import sys
 import threading
 import time
 import urllib.request
@@ -527,11 +525,13 @@ def _download(urls, out_path, expect=0, max_sec=1800, label=""):
             if partial:
                 have = os.path.getsize(out_path)
                 req.add_header("Range", "bytes=%d-" % have)
-            timeout = max_sec if not partial else max_sec
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with urllib.request.urlopen(req, timeout=max_sec) as resp:
                 total = int(resp.headers.get("Content-Length") or 0)
                 mode = "ab" if partial and resp.status == 206 else "wb"
-                wrote = os.path.getsize(out_path) if mode == "ab" else 0
+                have0 = os.path.getsize(out_path) if mode == "ab" else 0
+                full_total = total + have0
+                wrote = have0
+                last_mark = -1
                 with open(out_path, mode) as f:
                     while True:
                         chunk = resp.read(1 << 16)
@@ -539,15 +539,19 @@ def _download(urls, out_path, expect=0, max_sec=1800, label=""):
                             break
                         f.write(chunk)
                         wrote += len(chunk)
-                        if total:
-                            pct = min(100.0, wrote * 100.0 / (total + (wrote - 0 if mode == "ab" else 0)))
+                        if full_total:
+                            pct = min(100.0, wrote * 100.0 / full_total)
+                            mark = int(pct // 10)
+                            if mark > last_mark:
+                                _append_log("    %d%% (%d/%d bytes)" % (mark * 10, wrote, full_total))
+                                last_mark = mark
             # 服务器不支持 Range 时可能重下了一遍完整文件 -> 以 wb 重试一次
             if partial and _file_ok(out_path, expect) is False and _size_bigger(out_path, expect):
                 _append_log("  服务器忽略 Range，重下完整文件")
                 partial = False
                 for url2 in urls:
                     _append_log("  重下: %s" % url2)
-                    with urllib.request.urlopen(urllib.request.Request(url2), timeout=30) as resp:
+                    with urllib.request.urlopen(urllib.request.Request(url2), timeout=max_sec) as resp:
                         with open(out_path, "wb") as f:
                             while True:
                                 chunk = resp.read(1 << 16)

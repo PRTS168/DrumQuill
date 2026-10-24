@@ -4,7 +4,7 @@ Synthesized drum kit (kick/snare/hihat/tom/cymbal) - local, no external libs.
 
 Usage: python midi_to_wav.py <in.mid> <out.wav> [bpm] [gain]
 """
-import sys, os
+import sys
 import numpy as np
 import pretty_midi
 

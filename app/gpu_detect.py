@@ -10,10 +10,8 @@
 这里只做"决策"，真正的安装/校验在 installer.py 里。
 """
 import json
-import os
 import re
 import subprocess
-import sys
 
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
