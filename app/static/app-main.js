@@ -490,6 +490,22 @@
       var b = new Date(String(s.finished).replace(/-/g,'/')).getTime();
       if(a && b) meta.push('<span class="k">用时</span><span class="v">'+fmtDur((b-a)/1000)+'</span>');
     }
+    /* 没用上真实拍点：别让它悄悄降级（如果是用户自己关掉了节拍网格，就别再提示） */
+    var warn = $('#doneWarn');
+    if(warn){
+      var bs = String(s.beat_source || '');
+      var gridOff = !!(cfg && (cfg.beatGrid === false || cfg.beatGrid === 'false'));
+      if(bs && bs.indexOf('beat_this') !== 0 && !gridOff){
+        warn.innerHTML = '⚠ 这次没能用上真实拍点（Beat This 不可用，退回按全曲一个速度记谱），小节可能与音乐对不上。' +
+          '装好「节拍跟踪模型 Beat This」后重跑这首歌就会好 —— ' +
+          '<button class="btn ghost sm" id="doneWarnFix" style="margin-left:6px">去安装</button>';
+        warn.hidden = false;
+        var fix = $('#doneWarnFix');
+        if(fix) fix.onclick = function(){ if(window.dqOpenSetup) window.dqOpenSetup(); };
+      }else{
+        warn.hidden = true;
+      }
+    }
 
     var hasAudio = (s.results||[]).some(function(r){ return r.kind==='audio'; });
     /* 音频是第二产物：鼓声轨喂给播放器的「鼓声」音源 */

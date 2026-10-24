@@ -23,22 +23,64 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def set_torch_home():
-    """模型缓存定位：优先仓库内 models\\torch，其次用户设置的 TORCH_HOME。
+BEATS_CKPT = "beat_this-final0.ckpt"
+BEATS_MIN = 60 * 1024 * 1024        # 小于这个数是没下完的残片
 
-    这样无论系统缓存目录怎么迁移，只要仓库里存过权重就能离线复用；
-    两处都没有时才按 TORCH_HOME 下载。
+
+def _ckpt_dirs():
+    """权重可能出现的缓存位置（新位置在前）。"""
+    models = os.path.join(ROOT, "models")
+    out = [os.path.join(models, "torch", "hub", "checkpoints"),
+           os.path.join(models, "torch-hub", "hub", "checkpoints")]
+    th = os.environ.get("TORCH_HOME")
+    if th:
+        out.append(os.path.join(th, "hub", "checkpoints"))
+    out.append(os.path.join(os.path.expanduser("~"), ".cache", "torch", "hub", "checkpoints"))
+    return out
+
+
+def set_torch_home():
+    """把权重缓存固定到 models\\torch 一处。
+
+    以前这里"哪里有就用哪里"，结果同一份 77MB 权重被下到好几个目录，
+    还留下过 8MB 的残片（torch.hub 会把它当完整缓存用，然后加载失败、静默退回 librosa）。
+    现在：标准位置优先；别处有完整的就搬过来；残片直接清掉让它重下。
     """
-    local = os.path.join(ROOT, "models", "torch", "hub", "checkpoints")
-    if os.path.isdir(local) and any(f.endswith(".ckpt") for f in os.listdir(local)):
-        os.environ["TORCH_HOME"] = os.path.join(ROOT, "models", "torch")
-        return
-    torch_home = os.environ.get("TORCH_HOME") or os.path.join(ROOT, "models", "torch")
+    canon = os.path.join(ROOT, "models", "torch")
+    ck = os.path.join(canon, "hub", "checkpoints", BEATS_CKPT)
+    os.environ["TORCH_HOME"] = canon
     try:
-        os.makedirs(torch_home, exist_ok=True)
-        os.environ.setdefault("TORCH_HOME", torch_home)
+        os.makedirs(os.path.dirname(ck), exist_ok=True)
     except Exception:
-        pass
+        return
+
+    def size(p):
+        try:
+            return os.path.getsize(p)
+        except Exception:
+            return 0
+
+    if size(ck) >= BEATS_MIN:
+        pass                                  # 标准位置就绪
+    else:
+        for d in _ckpt_dirs()[1:]:            # 别处有完整权重：搬过来
+            src = os.path.join(d, BEATS_CKPT)
+            if size(src) >= BEATS_MIN:
+                try:
+                    import shutil
+                    shutil.copy2(src, ck)
+                    sys.stderr.write("[i] 拍点权重已归位到 %s\n" % ck)
+                except Exception:
+                    pass
+                break
+    for d in _ckpt_dirs():                    # 残片一律清掉
+        p = os.path.join(d, BEATS_CKPT)
+        if 0 < size(p) < BEATS_MIN:
+            try:
+                os.remove(p)
+                sys.stderr.write("[!] 删除没下完的拍点权重残片：%s\n" % p)
+            except Exception:
+                pass
 
 
 def track_beat_this(audio, device="cpu"):
@@ -131,12 +173,18 @@ def main():
         return 2
 
     beats, downbeats, source = [], [], ""
+    beat_error = ""
     try:
         beats, downbeats, source = track_beat_this(audio, device)
     except Exception as e:
+        beat_error = "%s: %s" % (type(e).__name__, str(e)[:160])
         sys.stderr.write("[!] Beat This 不可用（%s），回退 librosa\n" % e)
     if len(beats) < 8:
         beats, downbeats, source = track_librosa(audio)
+        if not beat_error:
+            beat_error = "拍点太少，改用 librosa"
+        print("[!] 这次没有用上真实拍点（Beat This %s）——谱面会按全曲一个固定速度记，"
+              "小节可能与音乐对不上。装好「节拍跟踪模型 Beat This」后重跑这首歌即可。" % (beat_error or "不可用"))
 
     if len(beats) < 8:
         print("[!] 拍点太少（%d），无法建立栅格" % len(beats))
@@ -167,6 +215,7 @@ def main():
 
     data = {
         "source": source,
+        "source_error": beat_error,
         "bpm_median": round(float(60.0 / np.median(iv)), 2),
         "bpm_cv": round(float(np.std(iv) / np.mean(iv)), 4),
         "meter": meter,

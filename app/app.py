@@ -560,6 +560,22 @@ def start():
     return jsonify({"ok": True, "mode": mode, "device": STATE["device_override"]})
 
 
+def _beat_source(song):
+    """这首歌的拍点来源（beat_this = 用上了真实拍点；librosa/空 = 按固定速度记的谱）。"""
+    try:
+        base = os.path.splitext(os.path.basename(song or ""))[0]
+        if not base:
+            return ""
+        p = os.path.join(midis_dir(), base + ".beats.json")
+        if not os.path.isfile(p):
+            return ""
+        with open(p, encoding="utf-8") as f:
+            d = json.load(f)
+        return str(d.get("source") or "")
+    except Exception:
+        return ""
+
+
 @app.route("/api/status")
 def status():
     with _lock:
@@ -597,6 +613,11 @@ def status():
         results = _result_files(base)
     s["results"] = results
     s["log_tail"] = tail_log(60)
+    # 这次是不是真的用上了 Beat This 拍点（用不上时谱面会按全曲一个固定速度记）
+    try:
+        s["beat_source"] = _beat_source(s.get("song") or "")
+    except Exception:
+        s["beat_source"] = ""
     # heartbeat: mtime of the job log (seconds, epoch) + whether the pipeline pid is alive
     try:
         s["log_mtime"] = os.path.getmtime(LOG_FILE)
@@ -610,7 +631,6 @@ def status():
 
 _DEVICE_RE = None
 _BPM_RE = None
-
 # 成品文件命名（full/audio 模式是 _鼓谱音频，stems 模式是 _鼓声）
 _AUDIO_NAMES = ("_鼓谱音频.mp3", "_鼓谱音频.wav", "_鼓声.mp3", "_鼓声.wav")
 

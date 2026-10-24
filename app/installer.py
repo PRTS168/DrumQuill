@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 app/installer.py — 组件安装器（引导页 / 设置重装共用）。
 
@@ -50,6 +50,10 @@ COMPONENTS = [
      "desc": "先从混音里抽出鼓轨，再送去转录",
      "feature": "扒谱更准、更快",
      "without": "仍可扒谱：直接对整曲转录，镲片/加花更容易错、耗时更长"},
+    {"id": "beats_w", "name": "节拍跟踪模型 Beat This", "size": "77MB", "required": False, "group": "增强",
+     "desc": "跟踪每一拍与强拍，谱面节奏跟着音乐自己的速度走",
+     "feature": "谱面与小节跟音乐对得上（有鼓组变速/非 4/4 时差别最大）",
+     "without": "按全曲一个固定速度记谱：听得出、但小节常对不上，建议补装"},
     {"id": "mscore", "name": "MuseScore 4 排版", "size": "约 400MB", "required": False,
      "group": "增强", "manual": True,
      "desc": "专业五线谱排版与 PDF 渲染",
@@ -142,6 +146,11 @@ SIZE_DEMUCS_TH = 84141911
 SIZE_ADTOF_PTH = 3617805
 SIZE_SF3 = 51278610
 SIZE_FFMPEG_EXE = 82797568
+# Beat This 权重（torch hub 缓存里的 beat_this-final0.ckpt）
+SIZE_BEATS_CKPT = 81058141
+BEATS_CKPT_NAME = "beat_this-final0.ckpt"
+BEATS_URLS = ["https://cloud.cp.jku.at/public.php/dav/files/7ik4RrBKTS273gp/final0.ckpt"]
+BEATS_MIN_BYTES = 60 * 1024 * 1024      # 低于这个数就是没下完的残片
 PIP_KEY_IMPORTS = ["torch", "demucs", "beat_this", "librosa", "pretty_midi", "numpy", "soundfile", "flask", "requests"]
 PIP_OPT_IMPORTS = ["webview", "reportlab", "cairosvg"]
 
@@ -298,6 +307,65 @@ def _venv_probe(venv_py):
     return info
 
 
+def _beats_ckpt_candidates(root, cfg):
+    """Beat This 权重可能出现的位置（新位置在前）。"""
+    models = cfg.get("modelsDir") or os.path.join(root, "models")
+    out = [os.path.join(models, "torch", "hub", "checkpoints", BEATS_CKPT_NAME),
+           os.path.join(models, "torch-hub", "hub", "checkpoints", BEATS_CKPT_NAME)]
+    th = os.environ.get("TORCH_HOME")
+    if th:
+        out.append(os.path.join(th, "hub", "checkpoints", BEATS_CKPT_NAME))
+    out.append(os.path.join(os.path.expanduser("~"), ".cache", "torch", "hub", "checkpoints", BEATS_CKPT_NAME))
+    return out
+
+
+def _beats_ckpt(root, cfg):
+    """返回 (可用权重路径 or None, 说明文字)。<60MB 一律当残片。"""
+    partial = None
+    for p in _beats_ckpt_candidates(root, cfg):
+        try:
+            if not os.path.isfile(p):
+                continue
+            if os.path.getsize(p) >= BEATS_MIN_BYTES:
+                return p, p
+            partial = p
+        except Exception:
+            pass
+    if partial:
+        try:
+            mb = os.path.getsize(partial) / 1024.0 / 1024.0
+        except Exception:
+            mb = 0.0
+        return None, "权重没下完（%0.1fMB）" % mb
+    return None, "未下载"
+
+
+def _beats_target(root, cfg):
+    """权威位置：仓库内 models\\torch\\hub\\checkpoints（与 track_beats.py 一致）。"""
+    models = cfg.get("modelsDir") or os.path.join(root, "models")
+    return os.path.join(models, "torch", "hub", "checkpoints", BEATS_CKPT_NAME)
+
+
+def _pin_beats_ckpt(root, cfg):
+    """把散落在别处的权重收敛到标准位置，并清掉没下完的残片。"""
+    dst = _beats_target(root, cfg)
+    got, _note = _beats_ckpt(root, cfg)
+    if got and os.path.abspath(got) != os.path.abspath(dst):
+        try:
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copy2(got, dst)
+            _append_log("  已把权重归位到 %s" % dst)
+        except Exception as e:
+            _append_log("  权重归位失败（不影响使用）: %s" % str(e)[:120])
+    for p in _beats_ckpt_candidates(root, cfg):
+        try:
+            if os.path.isfile(p) and os.path.getsize(p) < BEATS_MIN_BYTES:
+                os.remove(p)
+                _append_log("  清掉没下完的残片: %s" % p)
+        except Exception:
+            pass
+
+
 def check_status(root, cfg, gpu=None):
     """返回每个组件的就绪状态。gpu 可传入 app.py 已缓存好的探测结果（避免再 import torch）。"""
     out = {}
@@ -324,6 +392,10 @@ def check_status(root, cfg, gpu=None):
     dem_th = os.path.join(dem_dir, "955717e8-8726e21a.th")
     dem_ok = _file_ok(dem_th, SIZE_DEMUCS_TH)
     out["demucs_w"] = {"ok": dem_ok, "note": dem_th if dem_ok else ("缺权重 %s" % dem_th)}
+
+    # beats_w（Beat This 拍点权重，torch hub 缓存）
+    bp, bnote = _beats_ckpt(root, cfg)
+    out["beats_w"] = {"ok": bool(bp), "note": bp if bp else bnote}
 
     # adtof
     adtof_ok = False
@@ -403,6 +475,10 @@ def capabilities(status):
          "required": False, "need": ["demucs_w"],
          "fallback": "整曲直接转录（精度略低）",
          "note": "" if ok_all("demucs_w") else "未安装分离模型：仍能扒谱，但直接对整曲转录，镲片/加花更容易错"},
+        {"key": "beat", "name": "按真实拍点记谱（Beat This）", "ok": ok_all("beats_w"),
+         "required": False, "need": ["beats_w"],
+         "fallback": "全曲固定速度（小节容易和音乐对不上）",
+         "note": "" if ok_all("beats_w") else "未安装拍点模型：谱面按全曲一个速度记，遇到变速或非 4/4 会明显对不上"},
         {"key": "pdf_pro", "name": "专业排版 PDF", "ok": ok_all("mscore"),
          "required": False, "need": ["mscore"],
          "fallback": "内置渲染 PDF（排版朴素）",
@@ -516,7 +592,7 @@ def run_install(root, cfg, components, dry_run=False):
                 # 每轮重新解析：装完 venv 之后 pip/adtof 才能拿到 venv 里的 python，
                 # 否则同一批选中「venv + pip」时 pip 会一直报“venv 未就绪”。
                 ok = _install_one(cid, root, cfg, _venv_py(root, cfg), dry_run)
-                if not ok and cid in ("venv", "pip", "demucs_w", "adtof"):
+                if not ok and cid in ("venv", "pip", "demucs_w", "adtof", "beats_w"):
                     STATE["ok"] = False
                     STATE["failed"].append(cid)
                 elif not ok:
@@ -675,6 +751,35 @@ def _install_one(cid, root, cfg, venv_py, dry_run):
             _append_log("  下载 ADTOF 权重（3.6MB，ghproxy 链）...")
             if not _download(ADTOF_W_URLS, w, expect=SIZE_ADTOF_PTH, max_sec=600):
                 return False
+        return True
+
+    if cid == "beats_w":
+        dst = _beats_target(root, cfg)
+        got, note = _beats_ckpt(root, cfg)
+        if got:
+            _append_log("  权重已存在: %s" % got)
+            _pin_beats_ckpt(root, cfg)
+            return True
+        # 残片先清掉：留着的话 torch.hub 会把它当完整缓存直接用
+        for p in _beats_ckpt_candidates(root, cfg):
+            try:
+                if os.path.isfile(p) and os.path.getsize(p) < BEATS_MIN_BYTES:
+                    os.remove(p)
+                    _append_log("  清掉没下完的残片: %s" % p)
+            except Exception:
+                pass
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        _append_log("  下载 Beat This 权重（约 77MB，CPJKU 官方源，支持续传）...")
+        if not _download(BEATS_URLS, dst, expect=SIZE_BEATS_CKPT, max_sec=1800):
+            # 拿不到精确大小时，退一步只要求"看起来是完整文件"
+            try:
+                ok_size = os.path.isfile(dst) and os.path.getsize(dst) >= BEATS_MIN_BYTES
+            except Exception:
+                ok_size = False
+            if not ok_size:
+                _append_log("  ✗ 权重没下完整，稍后重试这一项即可（已下载部分会续传）")
+                return False
+        _append_log("  ✓ 拍点权重就绪: %s" % dst)
         return True
 
     if cid == "ffmpeg":
