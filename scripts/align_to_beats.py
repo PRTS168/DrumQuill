@@ -31,17 +31,18 @@ def load_beats(path):
     beat_bar = d.get("beat_bars")
     beat_k = d.get("beat_positions")
     if not beat_bar or not beat_k:
-        # 兜底：按小节顺序依次分配拍（不按时间过滤，避免边界抖动导致错位）
-        beat_bar, beat_k, i = [], [], 0
+        # 兜底：bars 从第一个强拍开始切块，只覆盖其后的拍；开头的弱起拍不属于
+        # 任何小节，记 -1。不按时间过滤，避免边界抖动导致错位。
+        covered = sum(len(b["beats"]) for b in bars)
+        n_lead = max(0, len(beats) - covered)
+        beat_bar = [-1] * n_lead
+        beat_k = [-1] * n_lead
         for bi, bar in enumerate(bars):
             for k in range(len(bar["beats"])):
-                if i < len(beats):
-                    beat_bar.append(bi)
-                    beat_k.append(k)
-                    i += 1
-        while len(beat_bar) < len(beats):
-            beat_bar.append(len(bars) - 1)
-            beat_k.append(0)
+                if len(beat_bar) >= len(beats):
+                    break
+                beat_bar.append(bi)
+                beat_k.append(k)
     return (beats,
             np.array(d.get("downbeats") or [], dtype=float),
             bars,
@@ -77,9 +78,12 @@ def best_beat_shift(cells, meter, bar_ticks):
     for r in range(meter):
         beat_of_note, pitches = [], []
         for tick, slot in cells.items():
-            local = (tick - r * DIV) % bar_ticks
-            beat_of_note.append(local // DIV)
-            pitches.extend(slot.keys())
+            b = ((tick - r * DIV) % bar_ticks) // DIV
+            for p in slot:
+                # 槽内每个音高都要配上自己的拍位：同槽多音高（kick+hat）是鼓点常态；
+                # 旧写法拍位按槽记、音高按音高 extend，zip 会错配且截断。
+                beat_of_note.append(b)
+                pitches.append(p)
         sc = beat_prior(beat_of_note, pitches, meter)
         if r == 0:
             base = sc
@@ -119,6 +123,7 @@ def main():
 
     cells = {}          # abs_tick -> {pitch: velocity}
     clamped = 0
+    skipped_pickup = 0
     for ts, pitch, vel in notes:
         if ts < beats[0]:
             idx, frac = 0, 0.0
@@ -135,6 +140,10 @@ def main():
             idx = min(idx + 1, n_beats - 1)
             sub = 0
         bi = int(beat_bar[idx])
+        if bi < 0:
+            # 弱起拍（第一小节之前的拍）不属于任何小节：跳过，不写入栅格
+            skipped_pickup += 1
+            continue
         abs_tick = int(bar_start_tick[bi] + int(beat_k[idx]) * DIV + sub * CELL)
         slot = cells.setdefault(abs_tick, {})
         slot[pitch] = max(slot.get(pitch, 0), vel)
@@ -179,6 +188,7 @@ def main():
         "notes_in": len(notes),
         "cells_out": len(cells),
         "clamped_tail": clamped,
+        "skipped_pickup": skipped_pickup,
     }
     with open(plan_json, "w", encoding="utf-8") as f:
         json.dump(plan, f, ensure_ascii=False, indent=1)

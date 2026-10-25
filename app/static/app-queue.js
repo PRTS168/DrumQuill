@@ -31,6 +31,21 @@
                               body: JSON.stringify(body)} : {}).then(function (r) { return r.json(); });
   }
 
+  /* 与 /api/start 同源的 mode/bpm：模式取当前选中的产出按钮，BPM 取输入框。
+     队列推进（run_job）不再清洗 bpm，脏值会直进管线，必须在入库前按
+     /api/start 的规则（int 后 20–400，越界/非法不传 → 自动检测）清掉；无选中时 mode=full 向后兼容。 */
+  function pickModeBpm() {
+    var out = { mode: 'full' };
+    var mb = document.querySelector('#modeSwitch .jobmode.on');
+    if (mb && mb.dataset.mode) out.mode = mb.dataset.mode;
+    var raw = ((document.getElementById('bpm') || {}).value || '').trim();
+    if (raw) {
+      var v = Math.floor(Number(raw));
+      if (isFinite(v) && v >= 20 && v <= 400) out.bpm = v;
+    }
+    return out;
+  }
+
   /* 新建页的「加入队列」 */
   function bindAddFromPick() {
     var b = document.getElementById('addQueueBtn');
@@ -39,7 +54,8 @@
     b.onclick = function () {
       var n = (document.getElementById('pickedName') || {}).textContent || '';
       if (!n) { toast('先选一首歌', true); return; }
-      api('/api/queue', {action: 'add', songs: [n]}).then(function () {
+      var opt = pickModeBpm();
+      api('/api/queue', {action: 'add', songs: [n], mode: opt.mode, bpm: opt.bpm}).then(function () {
         refresh();
         if (window.dqShellShow) window.dqShellShow('queue');
       });
@@ -90,7 +106,8 @@
     if (add) add.onclick = function () {
       var n = (document.getElementById('pickedName') || {}).textContent || '';
       if (!n) { toast('先到「新建扒谱」选一首歌', true); return; }
-      api('/api/queue', {action: 'add', songs: [n]}).then(function () {
+      var opt = pickModeBpm();
+      api('/api/queue', {action: 'add', songs: [n], mode: opt.mode, bpm: opt.bpm}).then(function () {
         refresh();
         if (window.dqShellShow) window.dqShellShow('queue');
       });

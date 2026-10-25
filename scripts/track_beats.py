@@ -158,6 +158,28 @@ def build_bars(beats, downbeats, duration, meter=None):
     return bars
 
 
+def assign_beat_bars(beats, bars):
+    """每拍属于哪小节、小节内第几拍，供对齐脚本直接使用。
+
+    build_bars 从第一个强拍所在的拍（start_idx）开始按拍号切块，它之前的拍是
+    弱起（anacrusis），不属于任何小节，记 -1；bars 恰好覆盖 beats[start_idx:]，
+    所以弱起数 = len(beats) - bars 覆盖的拍数。
+    （旧实现从 beats[0] 起顺序分配：全体晚 start_idx 拍，尾部拍点还被补齐
+    循环错误塞进最后一格。）
+    """
+    n = len(beats)
+    covered = sum(len(b["beats"]) for b in bars)
+    pickup = max(0, n - covered)
+    beat_bars = [-1] * pickup
+    beat_positions = [-1] * pickup
+    for bi, bar in enumerate(bars):
+        for k in range(len(bar["beats"])):
+            if len(beat_bars) < n:
+                beat_bars.append(bi)
+                beat_positions.append(k)
+    return beat_bars, beat_positions, pickup
+
+
 def main():
     if len(sys.argv) < 3:
         print(__doc__)
@@ -198,18 +220,8 @@ def main():
     bars = build_bars(beats, downbeats, duration)
     _counts = [len(b["beats"]) for b in bars]
     meter = int(round(float(__import__("numpy").median(_counts)))) if _counts else 4
-    # 每拍属于哪小节、小节内第几拍（按顺序分配，供对齐脚本直接使用）
-    beat_bars, beat_positions = [], []
-    i = 0
-    for bi, bar in enumerate(bars):
-        for k in range(len(bar["beats"])):
-            if i < len(beats):
-                beat_bars.append(bi)
-                beat_positions.append(k)
-                i += 1
-    while len(beat_bars) < len(beats):
-        beat_bars.append(max(0, len(bars) - 1))
-        beat_positions.append(0)
+    # 每拍属于哪小节、小节内第几拍（弱起拍记 -1，供对齐脚本直接使用）
+    beat_bars, beat_positions, pickup = assign_beat_bars(beats, bars)
     meter_counts = [len(b["beats"]) for b in bars]
     meter = int(round(float(np.median(meter_counts)))) if meter_counts else 4
 
@@ -222,6 +234,7 @@ def main():
         "bars": bars,
         "beat_bars": beat_bars,
         "beat_positions": beat_positions,
+        "pickup_beats": pickup,
         "downbeats": [round(d, 4) for d in downbeats],
         "beats": [round(b, 4) for b in beats],
         "duration": round(duration, 3),

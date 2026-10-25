@@ -122,7 +122,9 @@ if ($venvPy -and (Test-Path $venvPy)) {
 }
 
 if (-not $venvOk) {
-    $script:missingCount++
+    # 计数口径：只有「本次运行结束时仍缺失」才计 missingCount；安装路径的成功/失败
+    # 分别体现在状态表「已创建」与 failedCount，避免首装全部成功却因计数不回退而 exit 1。
+    if ($CheckOnly -or $Offline) { $script:missingCount++ }
     if ($CheckOnly) {
         Add-Status "Python venv" "缺失" "(待创建)" "需要 Python>=3.9"
     } elseif ($Offline) {
@@ -205,7 +207,7 @@ if (-not $venvPy) {
     Add-Status "pip 依赖" "就绪" "venv 内"
 } else {
     Write-Host "  缺失包: $($missingImports -join ', ')"
-    $script:missingCount++
+    if ($CheckOnly -or $SkipPip -or $Offline) { $script:missingCount++ }
     if ($CheckOnly -or $SkipPip) {
         Add-Status "pip 依赖" "缺失" ($missingImports -join ",")
     } elseif ($Offline) {
@@ -278,7 +280,7 @@ if ($demOk) {
     }
     Add-Status "Demucs 权重" "就绪" $demDir
 } else {
-    $script:missingCount++
+    if ($CheckOnly -or $SkipWeights -or $Offline) { $script:missingCount++ }
     if ($CheckOnly -or $SkipWeights) {
         Add-Status "Demucs 权重" "缺失" "(约84MB)"
     } elseif ($Offline) {
@@ -311,7 +313,7 @@ if ($adtofOk) {
     Write-Host "  [跳过] venv/adtof_pytorch 不可用，权重无法检查"
     Add-Status "ADTOF 权重" "未检查" "(待 venv 就绪)"
 } else {
-    $script:missingCount++
+    if ($CheckOnly -or $SkipWeights -or $Offline) { $script:missingCount++ }
     if ($CheckOnly -or $SkipWeights) {
         Add-Status "ADTOF 权重" "缺失" "(约3.6MB)"
     } elseif ($Offline) {
@@ -341,7 +343,7 @@ if ($mscoreExe) {
     Write-Host "  MuseScore: $mscoreExe"
     Add-Status "MuseScore 4" "就绪" $mscoreExe
 } else {
-    $script:missingCount++
+    if ($CheckOnly -or $SkipMuseScore -or $Offline) { $script:missingCount++ }
     if ($CheckOnly -or $SkipMuseScore) {
         Add-Status "MuseScore 4" "缺失" "(需 GUI 安装)"
     } elseif ($Offline) {
@@ -371,7 +373,7 @@ if ($sf3Ok) {
     Write-Host "  音色库: $sf3Path"
     Add-Status "MS Basic.sf3" "就绪" "sound\"
 } else {
-    $script:missingCount++
+    if ($CheckOnly -or $SkipMuseScore -or $Offline) { $script:missingCount++ }
     $sf3Src = if ($mscoreExe) { Join-Path (Split-Path (Split-Path $mscoreExe -Parent) -Parent) "sound\MS Basic.sf3" } else { $null }
     if ($CheckOnly -or $SkipMuseScore) {
         Add-Status "MS Basic.sf3" "缺失" "(约51MB)"
@@ -405,7 +407,7 @@ if ($ffmpegExe) {
     Write-Host "  ffmpeg: $ffmpegExe"
     Add-Status "ffmpeg" "就绪" $ffmpegExe
 } else {
-    $script:missingCount++
+    if ($CheckOnly -or $SkipFfmpeg -or $Offline) { $script:missingCount++ }
     if ($CheckOnly -or $SkipFfmpeg) {
         Add-Status "ffmpeg" "缺失" "(音频转码)"
     } elseif ($Offline) {

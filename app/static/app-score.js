@@ -11,13 +11,12 @@
     card.hidden = !st.practice;
     syncPlayerVisibility();
   }
-  /* 播放器跟着"当前有歌在手上"出现：任务进行中（看的不是谱）就收起来 */
+  /* 播放器跟着"当前有歌在手上"出现：只要音频在就保持可用；任务运行中不再整体收起（否则练习/谱面库页的播放、区间循环、空格键会静默失效），
+     任务横幅与「运行中禁用新建入口」都不经过这里 */
   function syncPlayerVisibility() {
     var p = el('dqPlayer');
     if (!p) return;
-    var runEl = el('viewRun');
-    var running = !!(runEl && !runEl.hidden);
-    p.hidden = !(st.song && !running);
+    p.hidden = !st.song;
   }
   window.dqSyncCard = syncCardVisibility;
   var st = {

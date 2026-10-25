@@ -3,22 +3,52 @@
 Synthesized drum kit (kick/snare/hihat/tom/cymbal) - local, no external libs.
 
 Usage: python midi_to_wav.py <in.mid> <out.wav> [bpm] [gain]
+
+退出码约定：2 = 参数/用法错误；1 = 输入内容无法处理。
+空/无音符 MIDI 的语义（约定）：与 fix_tempo_tick 一致，选择「明确失败」而非
+产出一段静音 WAV 掩盖转录失败——stderr 打印中文错误并以退出码 1 结束，
+交给 run_pipeline.ps1 的失败提示链路（该处按非零退出码报「音频合成失败」）。
 """
 import sys
 import numpy as np
 import pretty_midi
 
+if len(sys.argv) < 3:
+    print("usage: midi_to_wav.py <in.mid> <out.wav> [bpm] [gain]")
+    sys.exit(2)
 MIDI = sys.argv[1]
 OUT = sys.argv[2]
-BPM = float(sys.argv[3]) if len(sys.argv) > 3 else 156.0
-GAIN = float(sys.argv[4]) if len(sys.argv) > 4 else 0.9
+try:
+    BPM = float(sys.argv[3]) if len(sys.argv) > 3 else 156.0
+    GAIN = float(sys.argv[4]) if len(sys.argv) > 4 else 0.9
+except ValueError:
+    print("usage: midi_to_wav.py <in.mid> <out.wav> [bpm] [gain]（bpm/gain 需为数字）")
+    sys.exit(2)
 SR = 44100
 
-pm = pretty_midi.PrettyMIDI(MIDI)
-# tempo from midi if present
-if pm.estimate_tempo() > 0:
-    BPM = pm.estimate_tempo()
+try:
+    pm = pretty_midi.PrettyMIDI(MIDI)
+except Exception as e:
+    print("错误：无法读取 MIDI 文件 %s（%s: %s）。" % (MIDI, type(e).__name__, e), file=sys.stderr)
+    sys.exit(1)
+if sum(len(inst.notes) for inst in pm.instruments) == 0:
+    print("错误：MIDI 中没有音符（0 个），无法合成预览音频；请检查上游转录输出是否为空：%s" % MIDI, file=sys.stderr)
+    sys.exit(1)
+# tempo from midi if present（pretty_midi 的 estimate_tempo 在音符少于 2 个时
+# 直接抛 ValueError，必须兜底回退命令行 bpm；顺带缓存一次，避免 O(n) 估算重复调用）
+try:
+    est = pm.estimate_tempo()
+except Exception:
+    est = 0.0
+if est > 0:
+    BPM = est
 duration = max(n.end for inst in pm.instruments for n in inst.notes) + 1.0
+# 超长曲保护：合成缓冲约需 duration*44100*20 字节（float64 主缓冲 + np.roll 副本
+# + int16 交错，约 0.85 MB/秒）。30 分钟以上的预览音频对本地工具已无意义且逼近
+# 内存上限，按通用时长上限提前拒绝（与具体歌曲无关），避免 MemoryError 裸崩。
+if duration > 1800.0:
+    print("错误：MIDI 音频时长 %.1f 分钟，超出本地预览合成上限（30 分钟）；请检查输入 MIDI 是否异常。" % (duration / 60.0), file=sys.stderr)
+    sys.exit(1)
 total = int(duration * SR)
 buf = np.zeros(total, dtype=np.float64)
 

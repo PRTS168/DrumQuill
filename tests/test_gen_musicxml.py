@@ -180,3 +180,108 @@ def test_e2e_empty_midi_fails(make_midi, tmp_path, monkeypatch):
     with pytest.raises(SystemExit):
         g.main()
     assert not out.exists()
+
+
+# ---------- P0 修复：rot 位移按全曲取模回卷，音符数守恒（4/4 半拍律动 rot>0） ----------
+
+# 4/4 半拍律动整体拖后一个十六分格（rot=1 能对齐），且 bar0/bar1 各有 cell0 音符：
+# 旧回卷只补一根小节线，bar0 cell0 与 bar1 cell0 会同时落到 (0,1800) 互相覆盖。
+HALF_TIME_2BARS = [
+    (49, 0.0, 100),                                   # bar0 cell0：crash
+    (35, 0.125, 100), (42, 0.125, 100),               # bar0 cell1：底鼓+踩镲
+    (42, 0.375, 100), (42, 0.625, 100), (42, 0.875, 100),
+    (38, 1.125, 100), (42, 1.125, 100),               # bar0 cell9（第 3 拍）：军鼓+踩镲
+    (42, 1.375, 100), (42, 1.625, 100), (42, 1.875, 100),
+    (35, 2.0, 100),                                   # bar1 cell0：底鼓（回卷撞键对）
+    (35, 2.125, 100), (42, 2.125, 100),
+    (42, 2.375, 100), (42, 2.625, 100), (42, 2.875, 100),
+    (38, 3.125, 100), (42, 3.125, 100),
+    (42, 3.375, 100), (42, 3.625, 100), (42, 3.875, 100),
+]
+
+
+def test_best_rotation_prefers_rot_over_zero_for_dragged_half_time(monkeypatch):
+    monkeypatch.setattr(g, "BEAT_S", 0.5)
+    rot, scores = g.best_rotation(HALF_TIME_2BARS)
+    assert rot > 0                       # 拖后一格的半拍律动不应停在 rot=0
+    assert rot == scores[0][1]           # 返回的是最高分相位
+    best = max(s for s, _r in scores)
+    assert rot == min(r for s, r in scores if s == best)   # 平局取更小 rot
+    assert len(scores) == 16             # 4/4 搜索范围 = min(16, 4*4)
+
+
+def test_e2e_half_time_rot_conserves_notes_and_keeps_first_bar(
+        make_midi, tmp_path, monkeypatch):
+    mid = make_midi(HALF_TIME_2BARS, out_path=tmp_path / "song.mid", bpm=120.0)
+    out = tmp_path / "song.musicxml"
+    monkeypatch.setattr(g, "MIDI", str(mid))
+    monkeypatch.setattr(g, "OUT", str(out))
+    monkeypatch.setattr(g, "BPM", 120.0)
+    monkeypatch.setattr(g, "BEAT_S", 0.5)
+    monkeypatch.setattr(g, "TITLE", "Half Time")
+    monkeypatch.setattr(g, "MARKERS_FILE", None)
+    monkeypatch.setattr(g, "BARS_PER_LINE", 4)
+    monkeypatch.setattr(g, "GRID", 16)
+    monkeypatch.setattr(g, "PLAN", None)
+    assert g.main() == 0
+    xml = out.read_text(encoding="utf-8")
+    # 音符数守恒：22 个输入音符一个不丢（旧代码会覆盖掉 1 个）
+    assert xml.count("<unpitched>") == 22
+    m1 = xml.split('<measure number="1">')[1].split("</measure>")[0]
+    # 首小节保留完整内容：10 个本小节音符 + bar1 cell0 回卷来的底鼓
+    assert m1.count("<unpitched>") == 11
+    assert m1.count('<instrument id="P1-I36"/>') == 2   # 两记底鼓都在
+    assert m1.count('<instrument id="P1-I39"/>') == 1   # 军鼓也在
+
+
+# ---------- P1 修复：PLAN（拍栅格）分支不做相位搜索，rot=0 不位移 ----------
+
+def test_e2e_plan_3_4_skips_phase_search(make_midi, tmp_path, monkeypatch):
+    # 3/4 华尔滋整体晚一拍（若错误地做相位搜索会选中 rot=4，全谱晚一拍）
+    waltz = []
+    for bar in range(2):
+        base = bar * 1.5                       # 120 BPM、3/4：每小节 1.5s
+        waltz += [(35, base + 0.5, 100),       # 第 2 拍底鼓
+                  (38, base + 1.0, 100)]       # 第 3 拍军鼓
+    mid = make_midi(waltz, out_path=tmp_path / "waltz.mid", bpm=120.0)
+    out = tmp_path / "waltz.musicxml"
+    monkeypatch.setattr(g, "MIDI", str(mid))
+    monkeypatch.setattr(g, "OUT", str(out))
+    monkeypatch.setattr(g, "BPM", 120.0)
+    monkeypatch.setattr(g, "BEAT_S", 0.5)
+    monkeypatch.setattr(g, "TITLE", "Waltz")
+    monkeypatch.setattr(g, "MARKERS_FILE", None)
+    monkeypatch.setattr(g, "BARS_PER_LINE", 4)
+    monkeypatch.setattr(g, "GRID", 16)
+    monkeypatch.setattr(g, "METER", 3)
+    monkeypatch.setattr(g, "BAR_TICKS", 1440)
+    monkeypatch.setattr(g, "PLAN", {"n_bars": 2, "meter": 3, "bpm_median": 120.0,
+                                    "bars": [{"bpm": 120.0}, {"bpm": 120.0}]})
+
+    def _boom(_raw):
+        raise AssertionError("PLAN 模式不得做相位搜索")
+
+    monkeypatch.setattr(g, "best_rotation", _boom)
+    assert g.main() == 0
+    xml = out.read_text(encoding="utf-8")
+    assert xml.count("<unpitched>") == 4              # 音符数守恒
+    assert "<beats>3</beats>" in xml
+    m1 = xml.split('<measure number="1">')[1].split("</measure>")[0]
+    lead_rest = m1.find("<rest/><duration>480</duration>")
+    first_note = m1.find("<unpitched>")
+    # rot=0：第 2 拍的底鼓保持在原位（小节头有 480 tick 前导休止），而非被搬到第 1 拍
+    assert 0 <= lead_rest < first_note
+
+
+# ---------- P1 修复：2/4 相位搜索范围 min(16, 4*METER)，平局取更小 rot ----------
+
+def test_best_rotation_2_4_tie_picks_smallest_rot(monkeypatch):
+    monkeypatch.setattr(g, "METER", 2)
+    monkeypatch.setattr(g, "BAR_TICKS", 960)
+    monkeypatch.setattr(g, "BEAT_S", 0.5)
+    # 每格一个踩镖：任意相位得分完全相同 -> 纯平局
+    raw = [(42, c * 0.125, 90) for c in range(8)]
+    rot, scores = g.best_rotation(raw)
+    assert len(scores) == 8                 # 搜索范围 = min(16, 4*2)，不再超出一个小节
+    assert scores[0][0] == scores[1][0]     # 确实是平局
+    assert rot == 0                         # 平局取更小 rot（旧代码 sort(reverse=True) 会取 7）

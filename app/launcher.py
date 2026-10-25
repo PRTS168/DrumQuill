@@ -273,6 +273,22 @@ def kill_tree(pid):
         log("kill_tree(%d) failed: %r" % (pid, e))
 
 
+FALLBACK_PORT_TRIES = 10
+
+
+def pick_fallback_port(start_port):
+    """回退端口同样要探测占用（F8）：8757 一带是常见代理/开发端口段，盲目启用会让
+    app.py 绑定失败，launcher 只会在 25 秒后报「服务启动超时」，用户无从排查。"""
+    for i in range(FALLBACK_PORT_TRIES):
+        cand = start_port + i
+        if port_owner(cand) is None:
+            return cand
+        log("fallback port %d is occupied too" % cand)
+    last = start_port + FALLBACK_PORT_TRIES - 1
+    log("no free port in %d..%d, using %d anyway" % (start_port, last, last))
+    return last
+
+
 def start_service(port, pythonw_path):
     """Launch venv pythonw shim running app.py. Return Popen."""
     env = dict(os.environ)
@@ -375,7 +391,7 @@ def main():
                 time.sleep(1.0)
                 our_proc = start_service(port, pythonw_path)
             else:
-                port = FALLBACK_PORT
+                port = pick_fallback_port(FALLBACK_PORT)
                 log("port owned by unrelated process -> using fallback %d" % port)
                 our_proc = start_service(port, pythonw_path)
         else:

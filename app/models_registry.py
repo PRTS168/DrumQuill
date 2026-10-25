@@ -225,9 +225,40 @@ _KNOWN_MB = {
 
 
 def _guess_size(fname):
-    """用于展示预计下载量与下载后的粗校验（真实完整性由 demucs 加载来验）。"""
+    """用于展示预计下载量（下载后的校验改用 _expected_bytes 的精确定字节数）。"""
     mb = _KNOWN_MB.get(fname, 70)
     return mb * 1024 * 1024
+
+
+# 各权重文件的精确字节数（2026-10 对 dl.fbaipublicfiles.com 逐 HEAD Content-Length 实测；
+# 955717e8 与 install.ps1 的 $SIZE_DEMUCS_TH 同值，互为印证）。下载完成时按此双向严格比对，
+# 替代旧的「≥85% 即放行」单向下限——弱网下截断 85%~100% 的权重曾被当成完整文件登记。
+_FILE_BYTES = {
+    "955717e8-8726e21a.th": 84141911,
+    "f7e0c4bc-ba3fe64a.th": 84141271,
+    "d12395a8-e57c48e6.th": 84141271,
+    "92cfc3b6-ef3bcb9c.th": 84141271,
+    "04573f0d-f3cf25b2.th": 84141271,
+    "5c90dfd2-34c22ccb.th": 54996327,
+    "e51eebcc-c1b80bdd.th": 167399275,
+    "a1d90b5c-ae9d2452.th": 167391595,
+    "cfa93e08-61801ae1.th": 167399275,
+    "5d2d6c55-db83574e.th": 167391595,
+}
+
+# 下载字节数校验的相对容差（双向）
+SIZE_TOLERANCE = 0.02
+
+
+def _expected_bytes(fname):
+    """权重文件的期望字节数：优先精确实测值，未收录的退回 MB 估算。"""
+    b = _FILE_BYTES.get(fname, 0)
+    return b if b > 0 else _guess_size(fname)
+
+
+def _size_ok(size, want_bytes):
+    """严格字节数校验：与期望值双向比对，超差一律判坏。"""
+    return want_bytes > 0 and abs(size - want_bytes) <= want_bytes * SIZE_TOLERANCE
 
 
 def _http_download(url, out_path, log, label, timeout=120):
@@ -262,17 +293,45 @@ def _http_download(url, out_path, log, label, timeout=120):
 
 
 def _download_file(urls, out_path, want_bytes, log, label):
-    """多源下载（断点续传 + 大小校验）。"""
+    """多源下载（断点续传 + 严格字节数校验）。"""
     for url in urls:
         log("    %s <- %s" % (label, url.split("//", 1)[-1][:70]))
         ok, size = _http_download(url, out_path, log, label)
-        if ok and size >= want_bytes * 0.85:
+        if ok and _size_ok(size, want_bytes):
             log("      ✓ %.1f MB" % (size / 1048576.0))
             return True
         if ok:
-            log("      ✗ 大小不对（%.1f / 期望 %.1f MB），换下一个源"
+            log("      ✗ 大小不符（%.1f / 期望 %.1f MB），换下一个源"
                 % (size / 1048576.0, want_bytes / 1048576.0))
+            if size > want_bytes:
+                # 超过期望大小时续传只会更大：删掉让下一个源整段重下
+                try:
+                    os.remove(out_path)
+                except OSError:
+                    pass
     return False
+
+
+def _rollback_install(dirp, name, meta, log=print):
+    """加载校验失败后清除该模型的 yaml 与全部权重文件，
+    防止坏模型因「yaml + ≥10MB 文件」的展示级粗检被永久当成已安装。"""
+    removed = 0
+    for f in list(meta.get("files", [])):
+        p = os.path.join(dirp, f)
+        try:
+            if os.path.isfile(p):
+                os.remove(p)
+                removed += 1
+        except Exception as e:
+            log("  回滚删除失败 %s: %s" % (f, e))
+    try:
+        y = os.path.join(dirp, name + ".yaml")
+        if os.path.isfile(y):
+            os.remove(y)
+            removed += 1
+    except Exception as e:
+        log("  回滚删除 yaml 失败: %s" % e)
+    log("  已回滚 %s：%d 个文件已清除" % (name, removed))
 
 
 def download_model(root, cfg, name, log=print):
@@ -284,36 +343,35 @@ def download_model(root, cfg, name, log=print):
             return False
         dirp = models_dir(root, cfg)
         os.makedirs(dirp, exist_ok=True)
-        ok, missing = _model_ok(dirp, name, meta)
-        if ok:
+        # 入口严格复核：_model_ok 是展示级粗检（≥10MB 即算完整），这里按元数据期望字节数
+        # 逐个复核。否则旧的截断残片（≥10MB 但不足期望大小）会被「已就绪」早退永久放过——
+        # 无 venv 时加载校验也会被跳过，坏模型就此固化成「已安装」。
+        todo = [f for f in meta["files"]
+                if not (os.path.isfile(os.path.join(dirp, f))
+                        and _size_ok(os.path.getsize(os.path.join(dirp, f)), _expected_bytes(f)))]
+        yml = os.path.join(dirp, name + ".yaml")
+        if not todo and os.path.isfile(yml):
             log("%s 已就绪，无需下载" % meta["label"])
             return True
-        if not missing:
-            missing = list(meta["files"])
-        log("下载 %s（%d 个权重文件）→ %s" % (meta["label"], len(missing), dirp))
-        for fname in missing:
+        log("下载 %s（%d 个权重文件）→ %s" % (meta["label"], len(todo), dirp))
+        for fname in todo:
             out = os.path.join(dirp, fname)
-            if os.path.isfile(out) and os.path.getsize(out) >= 10 * 1024 * 1024:
-                continue
             urls = [FBAI_ROOT + meta["root"] + "/" + fname]
-            if not _download_file(urls, out, _guess_size(fname), log, fname):
+            if not _download_file(urls, out, _expected_bytes(fname), log, fname):
                 log("✗ %s 下载失败（网络问题？已装的模型不受影响）" % fname)
                 return False
-        yml = os.path.join(dirp, name + ".yaml")
         try:
             with open(yml, "w", encoding="utf-8") as f:
                 f.write(meta["yaml"])
         except Exception as e:
             log("✗ 写 yaml 失败：%s" % e)
             return False
-        ok2, missing2 = _model_ok(dirp, name, meta)
-        if not ok2:
-            log("✗ 仍缺：%s" % ",".join(missing2))
-            return False
-        # 权威验收：让 demucs 自己把模型加载一次（权重损坏/尺寸不对都会在这里暴露）
+        # 权威验收：让 demucs 自己把模型加载一次（权重损坏/尺寸不对都会在这里暴露）。
+        # 校验失败必须回滚（删 yaml + 权重），否则下次入口粗检会把它当成已安装。
         log("  校验：用 demucs 加载 %s …" % name)
         if not verify_model(root, cfg, name, log):
-            log("✗ 模型加载校验失败，可能是权重不完整（可删除后重下）")
+            log("✗ 模型加载校验失败，已回滚登记与权重（可重新下载）")
+            _rollback_install(dirp, name, meta, log)
             return False
         log("✓ %s 下载完成并已通过加载校验" % meta["label"])
         return True

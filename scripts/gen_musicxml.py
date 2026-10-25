@@ -153,8 +153,10 @@ def continuous_groove(raw, rot_cells):
 
 
 def best_rotation(raw):
-    scores = [(round(continuous_groove(raw, r), 3), r) for r in range(16)]
-    scores.sort(reverse=True)
+    """在 min(16, 4*METER) 个相位里选律动最优的旋转；平局取更小 rot（确定性）。"""
+    n_phases = min(16, 4 * METER)
+    scores = [(round(continuous_groove(raw, r), 3), r) for r in range(n_phases)]
+    scores.sort(key=lambda sr: (-sr[0], sr[1]))
     return scores[0][1], scores
 
 
@@ -377,20 +379,34 @@ def main():
     cells = quantize(raw)
     if not cells:
         raise SystemExit("[!] 量化后没有任何可记谱的鼓件（检查音高映射）")
-    # 小节来自真实拍点，但拍内相位仍可能有整拍级偏差 -> 用鼓类先验在 16 个偏移里再校一次
-    rot, rot_scores = best_rotation(raw)
-    if rot:
-        shifted = {}
-        for (bar, tick), pitches in cells.items():
-            abs_tick = bar * BAR_TICKS + tick - rot * CELL
-            if abs_tick < 0:
-                abs_tick += BAR_TICKS * ((-abs_tick) // BAR_TICKS + 1)
-            shifted[divmod(abs_tick, BAR_TICKS)] = pitches
-        cells = shifted
-        print("bar rotation: %d 个十六分（%.0f ms），候选前 3：%s"
-              % (rot, rot * CELL * BEAT_S / DIV * 1000, rot_scores[:3]))
-    measures, stats = build_measures(cells)
+    # 全曲总长（小节数）在位移前定死：rot 回卷按整曲总长取模 wrap 到曲尾。
+    # 整曲取模是双射，任意 rot 下每个输入音符恰好映射到唯一输出槽位（音符数守恒）；
+    # 旧回卷只补一根小节线，小节0早期音符会与小节1同 tick 音符撞键互相覆盖（静默丢音）。
     n_bars = int(PLAN["n_bars"]) if PLAN else (max(cells)[0] + 1)
+    if PLAN:
+        # 拍栅格模式：小节与相位都来自真实拍点，不做相位搜索，rot=0 不位移
+        # （与 run_pipeline「跳过固定 BPM 量化与小节相位搜索」的口径一致）
+        rot = 0
+    else:
+        # 固定 BPM 模式：小节边界可能整体错位 -> 用鼓类先验在有限相位里校正
+        rot, rot_scores = best_rotation(raw)
+        if rot:
+            total_ticks = n_bars * BAR_TICKS
+            shifted = {}
+            for (bar, tick), pitches in cells.items():
+                abs_tick = (bar * BAR_TICKS + tick - rot * CELL) % total_ticks
+                key = divmod(abs_tick, BAR_TICKS)
+                slot = shifted.get(key)
+                if slot is None:
+                    shifted[key] = dict(pitches)
+                else:
+                    # 回卷后仍同键（如 plan 边界外溢出等极端情形）：合并进同一槽位，不丢音
+                    for p, v in pitches.items():
+                        slot[p] = max(slot.get(p, 0), v)
+            cells = shifted
+            print("bar rotation: %d 个十六分（%.0f ms），候选前 3：%s"
+                  % (rot, rot * CELL * BEAT_S / DIV * 1000, rot_scores[:3]))
+    measures, stats = build_measures(cells)
 
     problems = validate(measures)
     if problems:

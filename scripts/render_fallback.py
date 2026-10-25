@@ -25,9 +25,19 @@ PITCH_NAME = {35: "底鼓 BD", 38: "军鼓 SD", 42: "踩镲 HH", 47: "嗵鼓 Tom
 X_PITCHES = {42, 46, 49, 51, 57}  # x notehead (cymbals/hihat)
 BD_PITCH = 35
 
+if len(sys.argv) < 3:
+    print("usage: render_fallback.py <in.mid> <out.pdf> [bpm] [title]")
+    sys.exit(2)
 MIDI = sys.argv[1]
 OUT = sys.argv[2]
-BPM = float(sys.argv[3]) if len(sys.argv) > 3 else 156.0
+try:
+    BPM = float(sys.argv[3]) if len(sys.argv) > 3 else 156.0
+except ValueError:
+    print("usage: render_fallback.py <in.mid> <out.pdf> [bpm] [title]（bpm 需为数字）")
+    sys.exit(2)
+if not (BPM > 0):  # 挡住 0 / 负数 / NaN / inf，否则 bar_s 计算失真或除零
+    print("错误：BPM 必须为正数（收到：%r）。" % BPM, file=sys.stderr)
+    sys.exit(2)
 TITLE = sys.argv[4] if len(sys.argv) > 4 else os.path.splitext(os.path.basename(MIDI))[0]
 
 # ---- layout constants (points, A4 landscape) ----
@@ -55,14 +65,24 @@ pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
 CJK = "STSong-Light"
 
 # ---- load notes ----
-pm = pretty_midi.PrettyMIDI(MIDI)
+try:
+    pm = pretty_midi.PrettyMIDI(MIDI)
+except Exception as e:
+    print("错误：无法读取 MIDI 文件 %s（%s: %s）。" % (MIDI, type(e).__name__, e), file=sys.stderr)
+    sys.exit(1)
 notes = sorted((n.pitch, n.start, n.end) for inst in pm.instruments for n in inst.notes)
 beat_s = 60.0 / BPM
 bar_s = beat_s * 4
 dur = pm.get_end_time()
+# 空 MIDI（全休止）的语义（约定）：本脚本是 MuseScore 失败后的最后兜底渲染器，
+# 「有输入就出谱」——0 音符按 1 小节全休止降级产出合法 PDF，退出 0，不算失败。
 n_bars = max(1, int(round(dur / bar_s)))
 if notes:
-    n_bars = max(n_bars, int(notes[-1][1] // bar_s) + 1)
+    # 最晚小节按全曲最大「起音时间」计；旧写法 notes[-1][1] 取的是按 (pitch,start)
+    # 排序后的最后一项（最高音高的最后起音），吊镲早停、其余鼓件打到曲尾时会
+    # 低估小节数，尾部音符画丢。
+    last_start = max(s for _, s, _ in notes)
+    n_bars = max(n_bars, int(last_start // bar_s) + 1)
 print("fallback render: notes=%d bars=%d bpm=%g" % (len(notes), n_bars, BPM))
 
 

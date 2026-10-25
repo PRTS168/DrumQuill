@@ -276,6 +276,19 @@ def _epoch_of(stamp):
         return None
 
 
+# acquire→Popen 之间 STATE 里还没有 pid（ffprobe 探测音频时长最长约 30s），
+# 这段窗口里“进程不存在”不代表已死；宽限取 45s 覆盖最慢探测。
+_STARTUP_GRACE_SEC = 45.0
+
+
+def _started_age():
+    """当前任务 started_at 距现在的秒数；没有/解析失败时返回 None。"""
+    ep = _epoch_of(STATE.get("started_at") or "")
+    if ep is None:
+        return None
+    return max(0.0, time.time() - ep)
+
+
 def _job_pid_alive(state):
     """Liveness of the pipeline process recorded in `state`."""
     return _pid_alive(state.get("pid"), _epoch_of(state.get("started_at")))
@@ -415,6 +428,7 @@ def _run_job_body(song_path, bpm, mode):
             STATE["running"] = False
             STATE["error"] = str(e)
             STATE["stage_name"] = "启动失败: %s" % e
+        _save_state()
         write_log("[x/6] 启动准备失败: %s" % e)
         raise
 
@@ -480,16 +494,24 @@ def _run_job_body(song_path, bpm, mode):
             STATE["running"] = False
             STATE["error"] = str(e)
             STATE["stage_name"] = "启动失败: %s" % e
+        _save_state()
         write_log("[x/5] 启动失败: %s" % e)
 
 
 @app.route("/api/cancel", methods=["POST"])
 def cancel():
+    startup_pending = False
     with _lock:
         pid = STATE.get("pid")
         running = STATE["running"]
+        if running and not pid:
+            # 进程还没 Popen 出来（ffprobe 探测音频最长约 30s），此刻“进程不存在”
+            # 不代表已死；宽限期内拒绝取消且绝不动状态——否则任务槽被误释放，
+            # 用户/队列立刻再起一个，双开管线。
+            age = _started_age()
+            startup_pending = age is None or age < _STARTUP_GRACE_SEC
         alive = _job_pid_alive(STATE)
-        if running and not alive:
+        if running and not startup_pending and not alive:
             # nothing to kill: the pipeline already died (crash / task manager /
             # reboot). Never taskkill a PID that may now belong to something else.
             STATE["running"] = False
@@ -498,6 +520,8 @@ def cancel():
             STATE["stage_name"] = "任务中断"
             STATE["error"] = "任务进程已退出，无需取消。"
             _save_state()
+    if startup_pending:
+        return jsonify({"ok": False, "error": "任务正在启动，请稍候再取消"}), 409
     if not running:
         return jsonify({"ok": False, "error": "没有正在运行的任务"}), 400
     if not alive or not pid:
@@ -618,31 +642,40 @@ def _beat_source(song):
 
 @app.route("/api/status")
 def status():
+    zombie_song = None
     with _lock:
         # zombie guard: running=True but pipeline process already gone ->
         # flip to a clear "interrupted" state so the UI never shows a dead task as "running".
-        _grace = 15.0
-        try:
-            _age = time.time() - time.mktime(time.strptime(STATE.get("started_at") or "", "%Y-%m-%d %H:%M:%S"))
-        except Exception:
-            _age = 0.0
-        if STATE.get("running") and (STATE.get("pid") or _age > _grace) and not _job_pid_alive(STATE):
-            STATE["running"] = False
-            STATE["pid"] = None
-            STATE["finished"] = time.strftime("%Y-%m-%d %H:%M:%S")
-            STATE["stage_name"] = "任务中断"
-            STATE["error"] = "任务进程已退出（可能内存不足或被系统终止），中间产物已保留，可重新开始。"
-            _save_state()
-            try:
-                _mark_queue_state(STATE.get("song"), "failed")
-            except Exception:
-                pass
+        if STATE.get("running"):
+            if STATE.get("pid"):
+                _zombie = not _job_pid_alive(STATE)
+            else:
+                # pid 还没出来（acquire→Popen 之间，ffprobe 最长约 30s）：
+                # 45s 宽限内绝不判死，否则会把正在启动的任务标成 failed 并立刻推进队列 → 双开
+                _age = _started_age()
+                _zombie = _age is not None and _age > _STARTUP_GRACE_SEC
+            if _zombie:
+                STATE["running"] = False
+                STATE["pid"] = None
+                STATE["finished"] = time.strftime("%Y-%m-%d %H:%M:%S")
+                STATE["stage_name"] = "任务中断"
+                STATE["error"] = "任务进程已退出（可能内存不足或被系统终止），中间产物已保留，可重新开始。"
+                _save_state()
+                zombie_song = STATE.get("song")
         s = dict(STATE)
-    # 队列推进（前端每 2 秒轮询 status，顺手在这里驱动）
-    try:
-        _queue_advance_if_idle()
-    except Exception:
-        pass
+    if zombie_song is not None:
+        # 刚判死：先在 _lock 外把队列项标 failed（_lock 与 _queue_lock 不嵌套），
+        # 且本次请求不再推进队列——收尾瞬间立即重拉容易撞上还没退干净的状态
+        try:
+            _mark_queue_state(zombie_song, "failed")
+        except Exception:
+            pass
+    else:
+        # 队列推进（前端每 2 秒轮询 status，顺手在这里驱动）
+        try:
+            _queue_advance_if_idle()
+        except Exception:
+            pass
     s["queue"] = _queue_view()
     s["hints"] = _hints()
     s["eta_sec"] = _eta_seconds(s)
@@ -776,6 +809,10 @@ def _artifact_list(base):
                 add("midi", os.path.join(dirs["midis"], fn), "MIDI " + fn)
     except Exception:
         pass
+    # 中间：拍点数据（删除全部产物必须一并清掉，否则 beat_source 仍会读到旧拍点）
+    for suf, label in ((".beats.json", "拍点数据（beats.json）"),
+                       (".beats_plan.json", "拍点栅格计划（beats_plan.json）")):
+        add("midi", os.path.join(dirs["midis"], base + suf), label)
     # 源文件
     try:
         for ext in ALLOWED_EXT:
@@ -1172,10 +1209,13 @@ def history():
             continue
         items.append({"name": fn, "base": base, "size": os.path.getsize(p),
                       "time": time.strftime("%m-%d %H:%M", time.localtime(os.path.getmtime(p)))})
-    # 同一个 base 只保留一条（PDF 优先）
+    # 同一个 base 只保留一条，且 _鼓谱.pdf 优先：后跑 stems 会让 _鼓声.mp3 比
+    # PDF 新，按 mtime 取最新会把“看谱”那一行顶掉
     seen = {}
     for it in items:
-        seen.setdefault(it["base"], it)
+        cur = seen.get(it["base"])
+        if cur is None or (it["name"].endswith("_鼓谱.pdf") and not cur["name"].endswith("_鼓谱.pdf")):
+            seen[it["base"]] = it
     return jsonify(list(seen.values()))
 
 
@@ -1424,6 +1464,10 @@ def _write_service_stamp():
 # ===========================================================================
 QUEUE_FILE = os.path.join(APP_DIR, "queue.json")
 _ADVANCING = False
+# 队列文件的所有读-改-写都必须在 _queue_lock 内完成；它与 _lock（STATE 锁）互不嵌套：
+# 拿着 _queue_lock 时绝不取 _lock，反之亦然（run_job 必须在 _queue_lock 外调用）。
+_queue_lock = threading.Lock()
+_QUEUE_RESET_DONE = False  # 重启恢复（running→pending）每进程只在首次读队列时做一次
 STATS_FILE = os.path.join(APP_DIR, "job_stats.json")
 STAGES_N = 6
 
@@ -1444,25 +1488,41 @@ def _write_json(path, data):
         pass
 
 
-def _queue_list():
-    global _ADVANCING
+def _queue_load_locked():
+    """读取并规范化队列文件。调用方必须已持有 _queue_lock。
+
+    服务重启后，上次中断的 running 项退回 pending，避免永久卡住。
+    这步恢复每进程只在首次读取时执行一次（_QUEUE_RESET_DONE）：此后队列里
+    出现的 running 项是本进程的真实任务，若每次读取都重置，status 轮询、
+    cancel 等只读路径会在任务收尾瞬间把它“复活”成 pending，队列随即重跑
+    同一首歌（实测表现为 cancel 后同一秒任务重启）。
+    """
+    global _QUEUE_RESET_DONE
     q = _read_json(QUEUE_FILE, {"items": [], "paused": False})
     if not isinstance(q, dict):
         q = {"items": [], "paused": False}
     q.setdefault("items", [])
     q.setdefault("paused", False)
-    # 服务重启后，上次中断的 running 项退回 pending，避免永久卡住
-    changed = False
-    for it in q["items"]:
-        if it.get("state") == "running" and not STATE.get("running"):
-            it["state"] = "pending"
-            changed = True
-    if changed:
-        _write_json(QUEUE_FILE, q)
+    if not _QUEUE_RESET_DONE:
+        _QUEUE_RESET_DONE = True
+        if not STATE.get("running"):
+            changed = False
+            for it in q["items"]:
+                if it.get("state") == "running":
+                    it["state"] = "pending"
+                    changed = True
+            if changed:
+                _write_json(QUEUE_FILE, q)
     return q
 
 
-def _queue_save(q):
+def _queue_list():
+    with _queue_lock:
+        return _queue_load_locked()
+
+
+def _queue_save_locked(q):
+    """写队列文件。调用方必须已持有 _queue_lock，与前面的修改同一临界区。"""
     _write_json(QUEUE_FILE, q)
 
 
@@ -1488,45 +1548,56 @@ def _queue_advance_if_idle():
 
 
 def _advance_body():
-    q = _queue_list()
-    if q["paused"]:
-        return
-    nxt = None
-    for it in q["items"]:
-        if it.get("state") == "pending":
-            nxt = it
-            break
-    if not nxt:
-        return
-    path = os.path.join(songs_dir(), nxt["song"])
-    if not os.path.isfile(path):
-        nxt["state"] = "missing"
-        _queue_save(q)
-        return
-    nxt["state"] = "running"
-    _queue_save(q)
+    with _queue_lock:
+        q = _queue_load_locked()
+        if q["paused"]:
+            return
+        nxt = None
+        for it in q["items"]:
+            if it.get("state") == "pending":
+                nxt = it
+                break
+        if not nxt:
+            return
+        path = os.path.join(songs_dir(), nxt["song"])
+        if not os.path.isfile(path):
+            nxt["state"] = "missing"
+            _queue_save_locked(q)
+            return
+        nxt["state"] = "running"
+        _queue_save_locked(q)
     with _lock:
         STATE["device_override"] = nxt.get("device") or None
     try:
+        # run_job（内部会取 _lock）必须在 _queue_lock 之外调用
         started = run_job(path, nxt.get("bpm") or None, nxt.get("mode") or "full")
     except Exception:
         started = False
     if not started:
-        # 抢占失败（手动 start 抢先）或执行抛错：让出，回到待处理
-        nxt["state"] = "pending"
-        _queue_save(q)
+        # 抢占失败（手动 start 抢先）或执行抛错：让出，回到待处理。
+        # 重新读盘再改，避免拿旧快照覆盖期间的并发修改（如已被标成 failed/done）
+        with _queue_lock:
+            q = _queue_load_locked()
+            for it in q["items"]:
+                if it.get("song") == nxt["song"] and it.get("state") == "running":
+                    it["state"] = "pending"
+                    break
+            _queue_save_locked(q)
 
 
 def _mark_queue_state(song, state):
-    q = _queue_list()
-    changed = False
-    for it in q["items"]:
-        if it.get("song") == song and it.get("state") in ("running", "pending"):
-            it["state"] = state
-            changed = True
-            break
-    if changed:
-        _queue_save(q)
+    # 调用方不得持有 _lock（_lock 与 _queue_lock 不嵌套）；status 的 zombie 守卫
+    # 已改为先释放 _lock 再进来
+    with _queue_lock:
+        q = _queue_load_locked()
+        changed = False
+        for it in q["items"]:
+            if it.get("song") == song and it.get("state") in ("running", "pending"):
+                it["state"] = state
+                changed = True
+                break
+        if changed:
+            _queue_save_locked(q)
 
 
 @app.route("/api/queue", methods=["GET", "POST"])
@@ -1535,34 +1606,41 @@ def queue_api():
         return jsonify(_queue_list())
     body = request.get_json(silent=True) or {}
     action = (body.get("action") or "").lower()
-    q = _queue_list()
     if action == "add":
         names = body.get("songs") or ([body["song"]] if body.get("song") else [])
         added = 0
-        for n in names:
-            n = os.path.basename((n or "").strip())
-            if not n or not os.path.isfile(os.path.join(songs_dir(), n)):
-                continue
-            if any(it.get("song") == n and it.get("state") in ("pending", "running") for it in q["items"]):
-                continue
-            q["items"].append({"song": n, "mode": body.get("mode") or "full",
-                               "bpm": body.get("bpm") or None, "state": "pending"})
-            added += 1
-        _queue_save(q)
+        with _queue_lock:
+            q = _queue_load_locked()
+            for n in names:
+                n = os.path.basename((n or "").strip())
+                if not n or not os.path.isfile(os.path.join(songs_dir(), n)):
+                    continue
+                if any(it.get("song") == n and it.get("state") in ("pending", "running") for it in q["items"]):
+                    continue
+                q["items"].append({"song": n, "mode": body.get("mode") or "full",
+                                   "bpm": body.get("bpm") or None, "state": "pending"})
+                added += 1
+            _queue_save_locked(q)
         return jsonify({"ok": True, "added": added, "queue": _queue_view()})
     if action == "clear":
-        cur = STATE.get("song") if STATE.get("running") else None
-        q["items"] = [it for it in q["items"] if it.get("state") == "running" and it.get("song") == cur]
-        _queue_save(q)
+        with _queue_lock:
+            q = _queue_load_locked()
+            cur = STATE.get("song") if STATE.get("running") else None
+            q["items"] = [it for it in q["items"] if it.get("state") == "running" and it.get("song") == cur]
+            _queue_save_locked(q)
         return jsonify({"ok": True, "queue": _queue_view()})
     if action == "remove":
         n = os.path.basename((body.get("song") or "").strip())
-        q["items"] = [it for it in q["items"] if not (it.get("song") == n and it.get("state") != "running")]
-        _queue_save(q)
+        with _queue_lock:
+            q = _queue_load_locked()
+            q["items"] = [it for it in q["items"] if not (it.get("song") == n and it.get("state") != "running")]
+            _queue_save_locked(q)
         return jsonify({"ok": True, "queue": _queue_view()})
     if action in ("pause", "resume"):
-        q["paused"] = (action == "pause")
-        _queue_save(q)
+        with _queue_lock:
+            q = _queue_load_locked()
+            q["paused"] = (action == "pause")
+            _queue_save_locked(q)
         return jsonify({"ok": True, "queue": _queue_view()})
     return jsonify({"ok": False, "error": "unknown action"}), 400
 

@@ -192,7 +192,12 @@ if ($SkipSeparation) {
     if ($devicePref -ne "cpu" -and $gpuPy -and (Test-Path $gpuPy)) {
         $probeScript = Join-Path $scrDir "gpu_probe.py"
         if (Test-Path $probeScript) {
+            # PS 5.1 陷阱：$ErrorActionPreference="Stop" 时，重定向了 stderr 的原生进程只要往 stderr
+            # 写任何一行（进度/警告/空行），该行就会变成 ErrorRecord 并终止整个管线。原生调用一律临时降级。
+            $_eap = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
             $probeOut = & $gpuPy $probeScript 2>$null
+            $ErrorActionPreference = $_eap
             $line = ($probeOut | Select-Object -Last 1)
             if ($line) {
                 try {
@@ -366,7 +371,10 @@ if ($postDedupe -gt 0 -or $postMinLen -gt 0) {
 # 判据：军鼓踩 2、4 拍 -> 相邻军鼓间隔应接近 2 拍；检测值若偏快一倍，间隔会算成 4 拍。
 $bpmSanity = "$(Cfg 'bpmSanity' 'true')" -ne "false"
 if ($bpmSanity -and (Test-Path (Join-Path $scrDir "choose_bpm.py"))) {
+    $_eap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"   # 同上：stderr 重定向的原生调用不允许打断管线
     $bpmJson = & $venvPy (Join-Path $scrDir "choose_bpm.py") $rawMid $BPM --json 2>$null | Select-Object -Last 1
+    $ErrorActionPreference = $_eap
     if ($bpmJson -and $bpmJson.Trim().StartsWith("{")) {
         try {
             $bpmInfo = $bpmJson | ConvertFrom-Json
@@ -396,9 +404,18 @@ $beatsJson = Join-Path $midiDir "$song.beats.json"
 $planJson  = Join-Path $midiDir "$song.beats_plan.json"
 $beatAligned = $false
 if ($beatGrid -and (Test-Path (Join-Path $scrDir "track_beats.py")) -and (Test-Path (Join-Path $scrDir "align_to_beats.py"))) {
-    if (-not (Test-Path $beatsJson)) {
+    $beatsCacheFresh = $false
+    if (Test-Path $beatsJson) {
+        # 缓存只在比歌曲文件新时才复用；歌曲更新后必须重跟拍点
+        $beatsCacheFresh = (Get-Item $beatsJson).LastWriteTime -ge (Get-Item $SongPath).LastWriteTime
+        if (-not $beatsCacheFresh) { Write-Host "[*] beats.json 比歌曲文件旧，重新跟踪节拍..." }
+    }
+    if (-not $beatsCacheFresh) {
         Write-Host "[*] 跟踪节拍与强拍（Beat This，一次约 30 秒，结果会缓存）..."
+        $_eap = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"   # 同上：track_beats 的下载进度/警告都走 stderr，绝不能因此终止管线
         & $venvPy (Join-Path $scrDir "track_beats.py") $SongPath $beatsJson 2>&1 | Select-Object -Last 2 | ForEach-Object { Write-Host "    $_" }
+        $ErrorActionPreference = $_eap
     }
     if (Test-Path $beatsJson) {
         $bgMid = Join-Path $midiDir "$song.beats.mid"
@@ -439,19 +456,22 @@ if ($LASTEXITCODE -ne 0) {
 $quantTol = [double](Cfg "quantizeTol" 0.25)
 if ($quantTol -lt 0) { $quantTol = 0 }
 if ($quantTol -gt 0.5) { $quantTol = 0.5 }
+$fixAlignExit = 0
 if (-not $beatAligned) {
     & $venvPy (Join-Path $scrDir "fix_align.py") $bpmMid $alMid $BPM --auto --tol $quantTol
+    $fixAlignExit = $LASTEXITCODE   # 原生调用后立即存专用变量，避免被后续调用覆盖
 } else {
     Copy-Item $bpmMid $alMid -Force
 }
-if ($LASTEXITCODE -eq 0 -and $postSwing -gt 0 -and (Test-Path $alMid)) {
+if ($fixAlignExit -eq 0 -and $postSwing -gt 0 -and (Test-Path $alMid)) {
     $swTmp = Join-Path $midiDir "$song._swing.mid"
     & $venvPy (Join-Path $scrDir "postprocess.py") $alMid $swTmp --dedupe-ms 0 --min-len-ms 0 --swing $postSwing
-    if ($LASTEXITCODE -eq 0 -and (Test-Path $swTmp)) { Move-Item $swTmp $alMid -Force }
+    $swingExit = $LASTEXITCODE   # 摇摆失败不得污染 fix_align 的退出码判断
+    if ($swingExit -eq 0 -and (Test-Path $swTmp)) { Move-Item $swTmp $alMid -Force }
     else { Write-Host "[!] 摇摆量化失败（不影响主流程）。" }
 }
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "[!] fix_align 失败（exit $LASTEXITCODE）—— 请把上方输出发给开发者；中间文件在 $midiDir。"
+if ($fixAlignExit -ne 0) {
+    Write-Host "[!] fix_align 失败（exit $fixAlignExit）—— 请把上方输出发给开发者；中间文件在 $midiDir。"
     exit 1
 }
 if ($SkipScore) {

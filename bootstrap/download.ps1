@@ -44,12 +44,18 @@ function Invoke-DownloadOne {
         # 续传：若已有部分文件，curl -C - 追加；服务器不支持 Range 时删除残留重来一次
         $partial = Test-Path $OutFile
         Write-Host ("    [下载] 第 {0}/{1} 次: {2}" -f $i, $Tries, $Url)
-        $args = @("-L", "--connect-timeout", "15", "--max-time", "$MaxTimeSec",
+        # --fail：HTTP 4xx/5xx 时 curl 以非零退出且不写 body，错误页不会再被当成下载内容落盘
+        $args = @("-L", "--fail", "--connect-timeout", "15", "--max-time", "$MaxTimeSec",
                   "-sS", "-#", "-o", $OutFile, $Url)
-        if ($partial) { $args = @("-L", "-C", "-", "--connect-timeout", "15", "--max-time", "$MaxTimeSec",
+        if ($partial) { $args = @("-L", "-C", "-", "--fail", "--connect-timeout", "15", "--max-time", "$MaxTimeSec",
                   "-sS", "-#", "-o", $OutFile, $Url) }
         & $curl @args
         $code = $LASTEXITCODE
+        if ($code -ne 0 -and (Test-Path $OutFile) -and (Get-Item $OutFile).Length -eq 0) {
+            # 失败留下的 0 字节占位文件删掉（真正的半截数据保留，供 -C - 续传）
+            Write-Host "    [清理] 本次尝试失败，删除 0 字节残留: $OutFile"
+            Remove-Item $OutFile -Force -ErrorAction SilentlyContinue
+        }
 
         if ($code -eq 0 -and (Test-FileSizeOK -Path $OutFile -ExpectedSize $ExpectedSize)) {
             return $true
@@ -62,8 +68,11 @@ function Invoke-DownloadOne {
             if (-not $acceptsRange) {
                 Write-Host "    [提示] 该源不支持断点续传，清除残留后重新下载。"
                 Remove-Item $OutFile -Force -ErrorAction SilentlyContinue
-                & $curl -L --connect-timeout 15 --max-time $MaxTimeSec -sS -# -o $OutFile $Url
+                & $curl -L --fail --connect-timeout 15 --max-time $MaxTimeSec -sS -# -o $OutFile $Url
                 $code = $LASTEXITCODE
+                if ($code -ne 0 -and (Test-Path $OutFile) -and (Get-Item $OutFile).Length -eq 0) {
+                    Remove-Item $OutFile -Force -ErrorAction SilentlyContinue
+                }
                 if ($code -eq 0 -and (Test-FileSizeOK -Path $OutFile -ExpectedSize $ExpectedSize)) { return $true }
             }
         }
