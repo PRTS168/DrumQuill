@@ -20,6 +20,14 @@ param(
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
+# pip 环境隔离：宿主机残留的 PIP_* 会改变 venv 内 pip 行为——实测 PIP_USER=1 会让
+# venv 内一切安装直接失败（--user 在 venv 里不可见）。venv 内安装只认脚本给的参数。
+$env:PIP_USER = "0"
+Remove-Item "env:PIP_EXISTS_ACTION" -ErrorAction SilentlyContinue
+Remove-Item "env:PYTHONUSERBASE" -ErrorAction SilentlyContinue
+Remove-Item "env:PIP_TARGET" -ErrorAction SilentlyContinue
+Remove-Item "env:PIP_PREFIX" -ErrorAction SilentlyContinue
+
 # ---------------- 路径与配置 ----------------
 $ROOT = if ($env:DRUM_AI_ROOT) { $env:DRUM_AI_ROOT } else { Split-Path $PSScriptRoot -Parent }
 . (Join-Path $PSScriptRoot "download.ps1")
@@ -60,6 +68,10 @@ $SIZE_DEMUCS_TH  = 84141911
 $SIZE_ADTOF_PTH  = 3617805
 $SIZE_SF3        = 51278610
 $SIZE_FFMPEG_EXE = 82797568
+$SIZE_BEATS_CKPT = 81058141
+
+# Beat This 拍点权重（torch hub 缓存；与 app/installer.py 的 BEATS_URLS 对齐）
+$BEATS_URLS = @("https://cloud.cp.jku.at/public.php/dav/files/7ik4RrBKTS273gp/final0.ckpt")
 
 # 内置 pip 依赖清单（requirements.txt 不存在时使用）
 $PIP_PKGS = @(
@@ -71,7 +83,10 @@ $PIP_PKGS = @(
 function Invoke-PyB64 {
     param([string]$Code)
     $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($Code))
+    $_eap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"   # PS5.1：stderr 重定向的原生调用写 stderr 即终止脚本
     & $venvPy -c "import base64;exec(base64.b64decode('$b64').decode('utf-8'))" 2>$null
+    $ErrorActionPreference = $_eap
 }
 
 # 按镜像顺序尝试 pip install：任一成功即返回 True，全部失败返回 False
@@ -79,7 +94,10 @@ function Invoke-PipInstall {
     param([string[]]$PipArgs, [int]$TimeoutSec = 60)
     foreach ($m in $PYPI_MIRRORS) {
         Write-Host "    pip 源: $m"
+        $_eap = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"   # 同上：pip 的警告/报错都走 stderr，绝不能因此终止安装
         & $venvPy -m pip install @PipArgs -i $m --timeout $TimeoutSec --retries 2 --prefer-binary 2>$null
+        $ErrorActionPreference = $_eap
         if ($LASTEXITCODE -eq 0) { return $true }
         Write-Host "    该源失败，换下一个镜像..."
     }
@@ -115,7 +133,10 @@ if ($cfg -and $cfg.venvDir -and (Test-Path (Join-Path $cfg.venvDir "Scripts\pyth
 $venvPy = if ($venvDir) { Join-Path $venvDir "Scripts\python.exe" } else { $null }
 $venvOk = $false
 if ($venvPy -and (Test-Path $venvPy)) {
+    $_eap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     $ver = & $venvPy -c "import sys;print('%d.%d.%d'%sys.version_info[:3])" 2>$null
+    $ErrorActionPreference = $_eap
     $maj, $min = [int]($ver -split "\.")[0], [int]($ver -split "\.")[1]
     if ($maj -ge 3 -and $min -ge 9) { $venvOk = $true; Write-Host "  venv 就绪: $venvPy (Python $ver)" }
     else { Write-Host "  [警告] venv Python 版本 $ver 低于 3.9"; $venvPy = $null }
@@ -171,7 +192,7 @@ if (-not $venvOk) {
 Write-Host "`n[2/6] 检查 Python 依赖..."
 # cairosvg 需要原生 cairo 库（libcairo-2.dll），缺失时项目内有 render_fallback.py 兜底，按可选处理
 $IMPORT_LIST = @("torch","demucs","librosa","pretty_midi","numpy","scipy","soundfile",
-                 "flask","requests","svglib","reportlab","webview","matplotlib","adtof_pytorch")
+                 "flask","requests","svglib","reportlab","webview","matplotlib","adtof_pytorch","beat_this")
 $OPT_IMPORTS = @("cairosvg")
 $missingImports = @()
 $missingOpt = @()
@@ -297,11 +318,46 @@ if ($demOk) {
     }
 }
 
+# ---------------- 3b/6. Beat This 拍点权重 ----------------
+Write-Host "`n[3b/6] 检查 Beat This 拍点权重..."
+$btDir  = Join-Path $ROOT "models\torch\hub\checkpoints"
+$btCkpt = Join-Path $btDir "beat_this-final0.ckpt"
+$btOk = Test-FileSizeOK -Path $btCkpt -ExpectedSize $SIZE_BEATS_CKPT
+
+if ($btOk) {
+    Write-Host "  权重存在: $btCkpt"
+    Add-Status "Beat This 权重" "就绪" $btDir
+} else {
+    if ($CheckOnly -or $SkipWeights -or $Offline) { $script:missingCount++ }
+    if ($CheckOnly -or $SkipWeights) {
+        Add-Status "Beat This 权重" "缺失" "(约77MB)"
+    } elseif ($Offline) {
+        SayOfflineManual -Title "Beat This 拍点权重（约 77MB）" -Urls $BEATS_URLS `
+            -DestPath $btCkpt -SizeNote "约 77MB；源站较慢，支持断点续传，可多次重跑本脚本接著下"
+        Add-Status "Beat This 权重" "待下载(离线)" "-"
+    } else {
+        # 源站（cloud.cp.jku.at）速度不稳定：大超时 + 断点续传；下载失败不算致命——
+        # 扣谱主流程不受影响（按全曲固定速度记谱），UI 里可随时补装。
+        $ok = Invoke-DrumDownload -UrlChain $BEATS_URLS -OutFile $btCkpt `
+                  -ExpectedSize $SIZE_BEATS_CKPT -MaxTimeSec 3600 -ManualGuideName "Beat This 权重（约77MB）"
+        if ($ok) { Add-Status "Beat This 权重" "已下载" $btDir }
+        else {
+            Write-Host "  [提示] Beat This 权重未下载完：不影响扣谱，谱面按全曲固定速度记；"
+            Write-Host "         可稍后在设置页点「补装」继续（支持断点续传）。"
+            $script:missingCount++
+            Add-Status "Beat This 权重" "未完成(可补装)" "-"
+        }
+    }
+}
+
 # ---------------- 4. ADTOF 权重 ----------------
 Write-Host "`n[4/6] 检查 ADTOF 权重..."
 $adtofPkgDir = $null
 if ($venvPy) {
+    $_eap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     $adtofPkgDir = & $venvPy -c "import os,adtof_pytorch;print(os.path.dirname(adtof_pytorch.__file__))" 2>$null | Select-Object -Last 1
+    $ErrorActionPreference = $_eap
 }
 $adtofPth = if ($adtofPkgDir) { Join-Path $adtofPkgDir "data\adtof_frame_rnn_pytorch_weights.pth" } else { $null }
 $adtofOk = ($adtofPth -and (Test-FileSizeOK -Path $adtofPth -ExpectedSize $SIZE_ADTOF_PTH))
@@ -434,7 +490,14 @@ if ($ffmpegExe) {
                 Copy-Item $gzPath $ffLocal -Force
             }
             Remove-Item $gzPath -Force -ErrorAction SilentlyContinue
-            if ((Test-Path $ffLocal) -and (& $ffLocal -version 2>$null)) {
+            $ffOk = $null
+            if (Test-Path $ffLocal) {
+                $_eap = $ErrorActionPreference
+                $ErrorActionPreference = "Continue"
+                $ffOk = (& $ffLocal -version 2>$null)
+                $ErrorActionPreference = $_eap
+            }
+            if ($ffOk) {
                 $ffmpegExe = $ffLocal
                 # 写入 config.json 的 ffmpegPath
                 try {

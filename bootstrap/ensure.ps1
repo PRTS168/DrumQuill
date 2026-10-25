@@ -43,6 +43,8 @@ function Test-Ready {
     if (-not $venvPy) { return @{ Block = @("venv 不存在"); Warn = @() } }
 
     # 关键 import（快速探针）
+    $_eap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"   # PS5.1：stderr 重定向的原生调用写 stderr 即终止
     $miss = & $venvPy -c @"
 import importlib
 miss=[]
@@ -51,6 +53,7 @@ for m in ['torch','demucs','adtof_pytorch','librosa','flask']:
     except Exception: miss.append(m)
 print(' '.join(miss))
 "@ 2>$null
+    $ErrorActionPreference = $_eap
     $miss = ($miss | Select-Object -Last 1)
     if ($miss.Trim()) { $block += "Python 包缺失: $miss" }
 

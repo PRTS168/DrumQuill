@@ -63,7 +63,10 @@ function Invoke-DownloadOne {
 
         # -C - 时若服务器不支持断点（exit 33/39 类错误），删掉残留重新整段下载
         if ($partial -and $code -ne 0) {
+            $_eap = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"   # PS5.1：stderr 重定向的原生调用写 stderr 即终止
             $head = & $curl -sS -I --connect-timeout 10 $Url 2>$null
+            $ErrorActionPreference = $_eap
             $acceptsRange = ($head -match "accept-ranges:\s*bytes")
             if (-not $acceptsRange) {
                 Write-Host "    [提示] 该源不支持断点续传，清除残留后重新下载。"
