@@ -11,6 +11,7 @@
 <br />
 
 <img alt="release" src="https://img.shields.io/github/v/release/PRTS168/DrumQuill?style=flat-square&color=0e7490" />
+[![test](https://github.com/PRTS168/DrumQuill/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/PRTS168/DrumQuill/actions/workflows/test.yml)
 <img alt="downloads" src="https://img.shields.io/github/downloads/PRTS168/DrumQuill/total?style=flat-square&color=0f766e" />
 <img alt="license" src="https://img.shields.io/badge/license-MIT-334155?style=flat-square" />
 <img alt="python" src="https://img.shields.io/badge/python-3.9%2B-3776ab?style=flat-square" />
@@ -91,6 +92,8 @@
 
 所有数字都在一台 4 线程 CPU + 4GB 显存显卡的机器上测得，可复现；测试脚本随仓库提供
 （`build_work` 下的实验脚本不随发布包分发）。
+
+代码入库已通过持续集成：GitHub Actions 在 Windows 上跑完 152 项自动化用例与静态检查（[查看运行记录](https://github.com/PRTS168/DrumQuill/actions/workflows/test.yml)）。
 
 ### 1. 节奏对齐：三首歌、同一套代码、零逐曲参数
 
