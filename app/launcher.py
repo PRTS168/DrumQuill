@@ -364,7 +364,19 @@ def main():
     our_proc = None
 
     if ok:
-        if service_is_stale():
+        # 探活成功 ≠ 是自己的服务：另一份工作区/旧版也在跑 app.py（设计内的 8756/8757 并存）。
+        # 不核对 owner 就复用，用户会「双击新版却继续用旧代码」。必须比对命令行里的 app.py 路径。
+        owner = port_owner(port)
+        mine = bool(owner) and os.path.normcase(os.path.abspath(APP_PY)) in os.path.normcase(owner[2] or "")
+        if not mine:
+            port = pick_fallback_port(FALLBACK_PORT)
+            log("port %d served by ANOTHER app.py (%r) -> starting ours on %d"
+                % (DEFAULT_PORT, (owner[2] if owner else "?")[:120], port))
+            our_proc = start_service(port, pythonw_path)
+            if not wait_ready(port):
+                native_error("DrumQuill 服务启动超时。\n请查看日志：\n" + LOG_FILE)
+                return 1
+        elif service_is_stale():
             # 程序目录被更新过（例如换了新版 app 文件），老服务内存里还是旧代码
             owner = port_owner(port)
             log("running service uses stale code (stamp mismatch) -> restart")
