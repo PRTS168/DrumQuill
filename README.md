@@ -11,7 +11,7 @@
 <br />
 
 <img alt="release" src="https://img.shields.io/github/v/release/PRTS168/DrumQuill?style=flat-square&color=0e7490" />
-[![test](https://github.com/PRTS168/DrumQuill/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/PRTS168/DrumQuill/actions/workflows/test.yml)
+<a href="https://github.com/PRTS168/DrumQuill/actions/workflows/test.yml"><img alt="test" src="https://github.com/PRTS168/DrumQuill/actions/workflows/test.yml/badge.svg?branch=main" /></a>
 <img alt="downloads" src="https://img.shields.io/github/downloads/PRTS168/DrumQuill/total?style=flat-square&color=0f766e" />
 <img alt="license" src="https://img.shields.io/badge/license-MIT-334155?style=flat-square" />
 <img alt="python" src="https://img.shields.io/badge/python-3.9%2B-3776ab?style=flat-square" />
