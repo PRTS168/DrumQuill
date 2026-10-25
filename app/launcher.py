@@ -182,6 +182,16 @@ def native_error(text):
     ctypes.windll.user32.MessageBoxW(0, text, "DrumQuill", MB_OK | MB_ICONERROR)
 
 
+def venv_ready():
+    """预设/配置的 venv 是否已存在（venv 才装了 torch/demucs 等转录依赖；
+    系统 python 即使有 flask 也没有这些——不能拿它当「环境已就绪」）。"""
+    try:
+        v = resolve_venv_pythonw()
+        return bool(v) and os.path.isfile(v)
+    except Exception:
+        return False
+
+
 def _companion_python(pythonw_path):
     """pythonw 的控制台兄弟（python.exe）：用于子进程探测 import（pythonw 无 stdout）。"""
     if not pythonw_path:
@@ -403,12 +413,13 @@ def main():
         log("FATAL: app.py missing at %s" % APP_DIR)
         return 1
 
-    # 首次运行引导：服务解释器必须能 import flask（Web 安装向导就住在服务里）。
-    # 陌生机器常见状态：有 Python 但没 flask —— 不引导的话服务永远起不来，用户只会看到
-    # 「启动超时」。这里弹窗征得同意后，可见控制台跑一次 bootstrap\install.ps1（装 venv+核心包）。
+    # 首次运行引导：转录依赖（torch/demucs/adtof）只装在 venv 里，Web 安装向导又住在服务
+    # 进程里。判据必须是「venv 就绪」，而不是「解释器能不能 import flask」——系统 python
+    # 可能恰好有 flask（服务能起），但没有 torch，扒谱必败。venv 缺失或 venv 内缺 flask
+    # 都弹窗征得同意后，可见控制台跑一次 bootstrap\install.ps1（装 venv+核心包）。
     py_exe = _companion_python(pythonw_path)
-    if not _can_import_flask(py_exe):
-        log("service python cannot import flask -> first-run install gate")
+    if not venv_ready() or not _can_import_flask(py_exe):
+        log("first-run gate: venv_ready=%s flask_ok=%s" % (venv_ready(), _can_import_flask(py_exe)))
         if not native_confirm(
             "DrumQuill",
             "首次运行需要先安装运行环境\n"
