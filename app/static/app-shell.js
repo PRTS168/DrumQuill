@@ -137,7 +137,10 @@
   /* 任务完成 / 打开历史谱面时，确保用户停在「新建扒谱」这一页，否则会“打开但看不见” */
   function ensureNewPage() {
     var lib = $('pageLibrary');
-    if (lib && !lib.hidden) show('new');
+    if (!lib || lib.hidden) return;
+    /* 正在听歌就别把人从库页拽走：结果卡已就位，侧栏徽标与吐司足够提示 */
+    try { if (window.__dq && window.__dq.st && window.__dq.st.playing) return; } catch (e) {}
+    show('new');
   }
   var done = $('viewDone');
   if (done && window.MutationObserver) {

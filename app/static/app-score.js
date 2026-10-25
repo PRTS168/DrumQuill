@@ -791,18 +791,59 @@
     };
   }
 
+  /* 练习页自动接歌：优先本地记住的上一首，其次谱面库最新一首。
+     「再扒一首」(st.hold) 期间不打扰；候选歌谱面数据失效时静默回落到库里最新。 */
+  function fetchHistoryFirst(cb) {
+    fetch('/api/history', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (list) {
+      var it = (list && list.length) ? list[0] : null;
+      var base = it ? (it.base || String(it.name || '').replace(/_鼓谱\.pdf$/, '')) : '';
+      cb(base || null);
+    }).catch(function () { cb(null); });
+  }
+  function autoOpenForPractice() {
+    if (st.hold || st.explicit || st.autoOpening) return;
+    st.autoOpening = true;
+    var last = null;
+    try { last = localStorage.getItem('dqLastSong') || null; } catch (e) {}
+    var go = function (name) {
+      st.autoOpening = false;      if (name) openSong(name, { keepPage: true });
+    };
+    if (last) {
+      fetchScore(last).then(function (res) {
+        if (res && res[0] && res[0].ok && (res[0].bars || []).length) go(last);
+        else fetchHistoryFirst(go);
+      }).catch(function () { fetchHistoryFirst(go); });
+    } else {
+      fetchHistoryFirst(go);
+    }
+  }
+
   /* 进入 / 退出练习：谱面卡搬到练习页，练习工具行在播放器里展开 */
   var pmHome = null;
   function enterPractice() {
     var card = el('dqScore');
     var host = el('pmHost');
     if (!card || !host) return false;
-    if (!card.dataset.ready) return false;
+    if (!card.dataset.ready) {
+      /* 库里有歌但手上没有：自动接上最近练的/最新的一首，别给用户一面白墙 */
+      autoOpenForPractice();
+      return false;
+    }
     if (!pmHome) pmHome = { parent: card.parentNode, next: card.nextSibling };
     card.classList.add('practice');
     host.appendChild(card);
     card.hidden = false;
     st.practice = true;
+    /* 从库「试听」别首歌回来：把不属于当前谱的鼓声预览卸掉，光标才不会指错 */
+    var ra2 = el('resAudio');
+    if (ra2 && ra2.dataset.songName && ra2.dataset.songName !== st.song) {
+      try { ra2.pause(); } catch (e) {}
+      ra2.removeAttribute('src');
+      ra2.dataset.songName = '';
+      if (st.src === 'drum') st.src = 'mix';
+      syncSrcButtons();
+      attachDrumTrack(st.song);   /* 把当前歌自己的鼓声轨补回来 */
+    }
     el('pmEmpty').hidden = true;
     el('dqTools').hidden = false;
     el('dqPracticeBtn').textContent = '退出练习';
@@ -1096,10 +1137,28 @@
     ]);
   }
 
+  /* 历史歌的鼓声轨：产物里有音频成品就接上（/api/download kind=audio 的兑底顺序与结果页一致） */
+  function attachDrumTrack(name) {
+    var ra = el('resAudio');
+    if (!ra) return;
+    fetch('/api/artifacts?song=' + encodeURIComponent(name), { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (!j || !j.ok) return;
+        var has = (j.items || []).some(function (x) { return x.kind === 'audio'; });
+        if (has && st.song === name) {
+          ra.dataset.songName = name;
+          ra.setAttribute('src', '/api/download?kind=audio&song=' + encodeURIComponent(name));
+          syncSrcButtons();
+        }
+      }).catch(function () {});
+  }
+
   function applyScore(sm, lo, name) {
     if (!sm || !sm.ok || !(sm.bars || []).length) return false;
     if (name === st.jobSong) window.__dqLastJobSong = name;
     st.song = name;
+    try { localStorage.setItem('dqLastSong', name); } catch (e) {}
     st.bars = sm.bars || [];
     st.layout = (lo && lo.ok) ? lo : null;
     st.page = 1;
@@ -1111,13 +1170,19 @@
     Array.prototype.forEach.call(document.querySelectorAll('#dqSrc button'), function (b) {
       b.classList.toggle('on', b.dataset.src === 'mix');
     });
-    if (name !== (window.__dqLastJobSong || '')) el('resAudio').removeAttribute('src');
-    /* 回到本次结果时把「鼓声」轨接回来（去过别的谱再回来也不能丢） */
-    else {
+    var ra = el('resAudio');
+    if (name !== (window.__dqLastJobSong || '')) {
+      /* 历史歌：只要它还有鼓声音频成品，就把「鼓声」轨接回来（跟着练的核心参照） */
+      if (ra.dataset.songName !== name) {
+        ra.removeAttribute('src');
+        attachDrumTrack(name);
+      }
+    } else {
+      /* 回到本次结果时把「鼓声」轨接回来（去过别的谱再回来也不能丢） */
       var jobAudio = window.__dqJobAudio || '';
-      var ra = el('resAudio');
       if (jobAudio) { if (ra.getAttribute('src') !== jobAudio) ra.setAttribute('src', jobAudio); }
       else ra.removeAttribute('src');
+      ra.dataset.songName = name;
     }
     syncSrcButtons();                     /* 换歌后「鼓声」按钮的可用性跟着变 */
     disp.x = null; disp.bar = -1; disp.last = 0;
@@ -1170,6 +1235,7 @@
 
   function load() {
     if (st.explicit) return;             /* 用户正从「最近产物」看历史，别被当前任务顶掉 */
+    if (st.practice || st.playing) return;   /* 正在练习/试听：别把手上这首悄悄换掉 */
     fetch('/api/status').then(function (r) { return r.json(); }).then(function (s) {
       if (!s || !s.song) return;
       /* 用户点过「再扒一首」：先挂起，等他真的开新任务（或自己打开一首谱）
@@ -1263,6 +1329,8 @@
     var from = curAudio();
     if (from && from !== ra) { try { from.pause(); } catch (e) {} }
     ra.setAttribute('src', url);
+    var m2 = String(url).match(/[?&]song=([^&]+)/);
+    ra.dataset.songName = m2 ? decodeURIComponent(m2[1]) : '';   /* 记来源，进练习页时只清别首歌的 */
     st.src = 'drum';
     bindAudio(ra);
     syncSrcButtons();
