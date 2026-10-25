@@ -23,6 +23,12 @@ FIX_TEMPO = os.path.join(SCRIPTS_DIR, "fix_tempo_tick.py")
 MIDI2WAV = os.path.join(SCRIPTS_DIR, "midi_to_wav.py")
 RENDER_FB = os.path.join(SCRIPTS_DIR, "render_fallback.py")
 
+try:
+    import reportlab  # noqa: F401
+    _HAS_REPORTLAB = True
+except Exception:
+    _HAS_REPORTLAB = False  # render_fallback 是可选兑底渲染器；环境缺它时相关用例跳过
+
 _VENV_PY = os.path.join(PROJECT_ROOT, ".venv-test", "Scripts", "python.exe")
 PY = _VENV_PY if os.path.exists(_VENV_PY) else sys.executable
 
@@ -146,6 +152,7 @@ def test_midi_to_wav_empty_midi_fails_clearly(tmp_path):
     assert not dst.exists()
 
 
+@pytest.mark.skipif(not _HAS_REPORTLAB, reason="render_fallback 需要 reportlab（可选兑底渲染器），环境缺失时跳过")
 def test_render_fallback_empty_midi_degrades_to_one_rest_bar(tmp_path):
     src = write_midi(tmp_path / "empty.mid", [])
     dst = tmp_path / "out.pdf"
@@ -180,6 +187,7 @@ def test_midi_to_wav_single_note_ok(tmp_path):
         assert 44000 <= w.getnframes() <= 50000
 
 
+@pytest.mark.skipif(not _HAS_REPORTLAB, reason="render_fallback 需要 reportlab（可选兑底渲染器），环境缺失时跳过")
 def test_render_fallback_single_note_ok(tmp_path):
     src = write_midi(tmp_path / "one.mid", [(35, 0.0, 100)])
     dst = tmp_path / "out.pdf"
@@ -200,6 +208,7 @@ def test_midi_to_wav_unknown_pitch_only_ok(tmp_path):
 
 # ---------- render_fallback notes[-1] 回归：最晚小节按最大起音时间 ----------
 
+@pytest.mark.skipif(not _HAS_REPORTLAB, reason="render_fallback 需要 reportlab（可选兑底渲染器），环境缺失时跳过")
 def test_render_fallback_last_bar_uses_latest_onset_not_highest_pitch(tmp_path):
     # 吊镲(49)在 0s，底鼓(35)在 32 拍（文件 120bpm → 16.0s）；脚本 BPM 参数 60
     # → 每小节 4s，底鼓起音在第 5 小节开头。旧代码 notes[-1][1] 取排序后最后一项
