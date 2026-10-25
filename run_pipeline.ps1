@@ -1,4 +1,4 @@
-﻿# One-click drum transcription pipeline (Doubao 扒鼓谱) - portable + fallback chain
+﻿# One-click drum transcription pipeline (DrumQuill 扒鼓谱) - portable + fallback chain
 # Usage:
 #   powershell -ExecutionPolicy Bypass -File run_pipeline.ps1 -SongPath "<song>" [-BPM 156]
 #            [-SkipSeparation] [-SkipMuseScore] [-SkipFfmpeg] [-SkipAudio]

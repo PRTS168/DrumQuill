@@ -126,7 +126,9 @@ SERVICE_LOG = os.path.join(APP_DIR, "service.log")
 
 def load_config():
     try:
-        with open(os.path.join(ROOT, "config.json"), encoding="utf-8") as f:
+        # utf-8-sig：容忍 BOM（记事本/PowerShell 5.1 的 UTF8 都会写 BOM），
+        # 否则首个键名会带上 \ufeff，venvDir/dataDir 全部静默失效（与 app.py 同款坑）。
+        with open(os.path.join(ROOT, "config.json"), encoding="utf-8-sig") as f:
             data = json.load(f)
             return data if isinstance(data, dict) else {}
     except Exception:
@@ -178,6 +180,50 @@ def native_error(text):
     MB_OK = 0x0
     MB_ICONERROR = 0x10
     ctypes.windll.user32.MessageBoxW(0, text, "DrumQuill", MB_OK | MB_ICONERROR)
+
+
+def _companion_python(pythonw_path):
+    """pythonw 的控制台兄弟（python.exe）：用于子进程探测 import（pythonw 无 stdout）。"""
+    if not pythonw_path:
+        return None
+    d, base = os.path.split(pythonw_path)
+    if base.lower() == "pythonw.exe":
+        return os.path.join(d, "python.exe")
+    return pythonw_path
+
+
+def _can_import_flask(py_exe, timeout=120):
+    """服务进程必须能 import flask，否则 Web 首次向导起不来（陌生机器常见：有 Python 没 flask）。"""
+    if not py_exe or not os.path.isfile(py_exe):
+        return False
+    try:
+        r = subprocess.run(
+            [py_exe, "-c", "import flask"],
+            capture_output=True, timeout=timeout,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        return r.returncode == 0
+    except Exception as e:
+        log("flask probe failed: %r" % e)
+        return False
+
+
+def _run_first_install():
+    """可见控制台运行 bootstrap\install.ps1（缺什么装什么，走镜像）。返回退出码。"""
+    ps1 = os.path.join(ROOT, "bootstrap", "install.ps1")
+    if not os.path.isfile(ps1):
+        log("install.ps1 missing at %s" % ps1)
+        return 1
+    log("running first-run installer: %s" % ps1)
+    try:
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps1],
+            cwd=ROOT,
+        )
+        return r.returncode
+    except Exception as e:
+        log("first-run installer crashed: %r" % e)
+        return 1
 
 
 # --------------------------------------------------------------------------
@@ -354,8 +400,37 @@ def main():
         return 1
     if not os.path.isfile(APP_PY):
         native_error("找不到服务程序：\n%s\n请确认程序目录完整。" % APP_PY)
-        log("FATAL: app.py missing at %s" % APP_PY)
+        log("FATAL: app.py missing at %s" % APP_DIR)
         return 1
+
+    # 首次运行引导：服务解释器必须能 import flask（Web 安装向导就住在服务里）。
+    # 陌生机器常见状态：有 Python 但没 flask —— 不引导的话服务永远起不来，用户只会看到
+    # 「启动超时」。这里弹窗征得同意后，可见控制台跑一次 bootstrap\install.ps1（装 venv+核心包）。
+    py_exe = _companion_python(pythonw_path)
+    if not _can_import_flask(py_exe):
+        log("service python cannot import flask -> first-run install gate")
+        if not native_confirm(
+            "DrumQuill",
+            "首次运行需要先安装运行环境\n"
+            "（Python 虚拟环境 + 核心依赖包，约 1.5GB，走国内镜像，可断点续传）。\n\n"
+            "点「是」开始安装：会打开一个控制台窗口，请保持网络畅通并等它跑完；\n"
+            "完成后本程序会自动继续启动。\n\n"
+            "点「否」退出（之后可手动运行 bootstrap\\install.ps1）。",
+        ):
+            log("user declined first-run install")
+            return 1
+        install_rc = _run_first_install()
+        log("first-run installer exit=%s" % install_rc)
+        pythonw_path = resolve_pythonw()
+        py_exe = _companion_python(pythonw_path)
+        if not pythonw_path or not _can_import_flask(py_exe):
+            native_error(
+                "运行环境安装未完成（flask 仍不可用）。\n"
+                "请查看安装窗口的报错或日志：\n%s\n"
+                "也可手动运行 bootstrap\\install.ps1 后重新打开。" % LOG_FILE
+            )
+            log("FATAL: flask still unavailable after first-run install")
+            return 1
 
     # 1. probe default port
     port = DEFAULT_PORT
