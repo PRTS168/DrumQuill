@@ -13,7 +13,6 @@ import subprocess
 import sys
 import wave
 
-import mido
 import pytest
 from mido import Message, MetaMessage, MidiFile, MidiTrack, bpm2tempo
 

@@ -219,7 +219,7 @@ def _can_import_flask(py_exe, timeout=120):
 
 
 def _run_first_install():
-    """可见控制台运行 bootstrap\install.ps1（缺什么装什么，走镜像）。返回退出码。"""
+    r"""可见控制台运行 bootstrap\install.ps1（缺什么装什么，走镜像）。返回退出码。"""
     ps1 = os.path.join(ROOT, "bootstrap", "install.ps1")
     if not os.path.isfile(ps1):
         log("install.ps1 missing at %s" % ps1)
