@@ -47,9 +47,10 @@ $PYPI_MIRRORS = @(
     "https://pypi.org/simple"
 )
 $PYPI_MIRROR = $PYPI_MIRRORS[0]  # 兼容离线指引等对单变量的引用
+# 官方主源单链。原第二源 hf-mirror.com/facebook/htdemucs 已 404（RepoNotFound，
+# 2026-10-26 curl -I 实测），从链中移除；离线/失败分支的手动指引直接引用本链，自动同步。
 $DEMUCS_URLS   = @(
-    "https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/955717e8-8726e21a.th",
-    "https://hf-mirror.com/facebook/htdemucs/resolve/main/955717e8-8726e21a.th"
+    "https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/955717e8-8726e21a.th"
 )
 $ADTOF_W_URLS  = @(
     "https://ghproxy.net/https://raw.githubusercontent.com/xavriley/ADTOF-pytorch/main/data/adtof_frame_rnn_pytorch_weights.pth",

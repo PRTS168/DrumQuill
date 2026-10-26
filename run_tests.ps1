@@ -26,11 +26,8 @@ Write-Host "[OK] 单元测试通过"
 
 Write-Host "==== 3/3 静态体检（ruff，保守规则：F/E9/W6）===="
 & $PY -m ruff check (Join-Path $ROOT "app") (Join-Path $ROOT "scripts") --select F,E9,W6 --output-format concise
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "[WARN] 静态体检发现问题（上述列表）——不影响运行，建议按优先级修复"
-} else {
-    Write-Host "[OK] 静态体检通过"
-}
+if ($LASTEXITCODE -ne 0) { Write-Host "[FAIL] 静态体检未通过"; exit 1 }
+Write-Host "[OK] 静态体检通过"
 
 Write-Host ""
 Write-Host "==== DONE ===="

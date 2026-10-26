@@ -5,7 +5,7 @@ app/installer.py — 组件安装器（引导页 / 设置重装共用）。
 组件清单（可单独选装）:
   venv     Python 虚拟环境
   pip      Python 依赖包（torch CPU / demucs / librosa / flask 等，走清华镜像）
-  demucs_w Demucs htdemucs 权重（约 84MB，hf-mirror + fb 多源）
+  demucs_w Demucs htdemucs 权重（约 84MB，官方源）
   adtof    ADTOF 转录引擎（源码 + 权重，ghproxy 加速链）
   ffmpeg   ffmpeg 转码器（npmmirror 淘宝源）
   mscore   MuseScore 4（渲染 PDF / 音频，choco 或手动）
@@ -125,7 +125,6 @@ def _pip_install(py, args, timeout=3600, what="pip install"):
     return False
 DEMUCS_URLS = [
     "https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/955717e8-8726e21a.th",
-    "https://hf-mirror.com/facebook/htdemucs/resolve/main/955717e8-8726e21a.th",
 ]
 ADTOF_ZIP_URLS = [
     "https://ghproxy.net/https://github.com/xavriley/ADTOF-pytorch/archive/refs/heads/main.zip",
@@ -729,7 +728,7 @@ def _install_one(cid, root, cfg, venv_py, dry_run):
         if _file_ok(dem_th, SIZE_DEMUCS_TH):
             _append_log("  权重已存在")
         else:
-            _append_log("  下载 Demucs 权重（约 84MB，hf-mirror + 官方双源）...")
+            _append_log("  下载 Demucs 权重（约 84MB，官方源）...")
             if not _download(DEMUCS_URLS, dem_th, expect=SIZE_DEMUCS_TH, max_sec=1800):
                 return False
         yml = os.path.join(dem_dir, "htdemucs.yaml")
@@ -774,7 +773,10 @@ def _install_one(cid, root, cfg, venv_py, dry_run):
                 pass
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         _append_log("  下载 Beat This 权重（约 77MB，CPJKU 官方源，支持续传）...")
-        if not _download(BEATS_URLS, dst, expect=SIZE_BEATS_CKPT, max_sec=1800):
+        # Beat This 源（cloud.cp.jku.at）速度不稳定：77MB 在 1800s 内常下不完，
+        # 调大到 3600s（与 install.ps1 的 -MaxTimeSec 3600 同口径）；
+        # _download 对已有残片带 Range: bytes=N- 续传，重跑接著下。
+        if not _download(BEATS_URLS, dst, expect=SIZE_BEATS_CKPT, max_sec=3600):
             # 拿不到精确大小时，退一步只要求"看起来是完整文件"
             try:
                 ok_size = os.path.isfile(dst) and os.path.getsize(dst) >= BEATS_MIN_BYTES
