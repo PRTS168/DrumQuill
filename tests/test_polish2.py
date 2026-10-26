@@ -130,9 +130,20 @@ def test_delete_only_intermediate_keeps_products(iso, client, tmp_path, monkeypa
                                          "only_intermediate": True})
     assert r.status_code == 200
     removed = r.get_json()["removed"]
-    assert set(removed) == {"htdemucs\\a\\drums.wav", "a.beats_al.mid"}
-    for keep in ("a_鼓谱.pdf", "a.musicxml", "a_鼓谱音频.mp3", "a.mp3"):
+    # 只删中间产物；最终 MIDI 成品（.beats_al.mid，与下载端点同口径）必须保留
+    assert set(removed) == {"htdemucs\\a\\drums.wav"}
+    for keep in ("a_鼓谱.pdf", "a.musicxml", "a_鼓谱音频.mp3", "a.beats_al.mid", "a.mp3"):
         assert (tmp_path / keep).exists()                     # 成品与源音频保留
+
+
+def test_delete_only_intermediate_removes_raw_and_intermediate_midi(iso, client, tmp_path, monkeypatch):
+    _fake_artifacts(monkeypatch, tmp_path, [("midi", "a.mid"), ("midi", "a.beats.mid"),
+                                            ("midi", "a._pp.mid"), ("stem", "htdemucs/a/drums.wav")])
+    r = client.post("/api/delete", json={"song": "a.mp3", "keep_source": True,
+                                         "only_intermediate": True})
+    assert r.status_code == 200
+    assert set(r.get_json()["removed"]) == {"a.mid", "a.beats.mid", "a._pp.mid",
+                                            "htdemucs\\a\\drums.wav"}
 
 
 def test_delete_without_flag_still_removes_all(iso, client, tmp_path, monkeypatch):

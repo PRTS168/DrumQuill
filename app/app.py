@@ -611,6 +611,7 @@ def _run_job_body(song_path, bpm, mode, device=None):
             STATE["stage_name"] = "启动失败: %s" % e
         _save_state()
         write_log("[x/5] 启动失败: %s" % e)
+        _schedule_advance_fallback()   # Popen 失败已释放任务槽：让队列继续后续任务
 
 
 @app.route("/api/cancel", methods=["POST"])
@@ -1372,8 +1373,12 @@ def delete_artifacts():
     for it in _artifact_list(base):
         if it["kind"] == "source" and keep_source:
             continue
-        if only_intermediate and it["kind"] in ("pdf", "xml", "audio"):
-            continue          # 只清中间产物：成品与源音频保留
+        if only_intermediate:
+            if it["kind"] in ("pdf", "xml", "audio"):
+                continue      # 成品保留
+            if it["kind"] == "midi" and os.path.basename(it["path"]) not in (
+                    base + ".mid", base + ".beats.mid", base + "._pp.mid"):
+                continue      # 最终 MIDI 成品保留（与下载端点同口径）
         try:
             os.remove(it["path"])
             removed.append(it["name"])
@@ -1768,7 +1773,7 @@ def queue_api():
         bpm = body.get("bpm")
         try:
             bpm = int(float(bpm)) if bpm else None
-        except (TypeError, ValueError):
+        except Exception:
             bpm = None
         if bpm is not None and not (20 <= bpm <= 400):
             bpm = None
