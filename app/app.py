@@ -11,6 +11,8 @@ import time
 import subprocess
 import threading
 import sys
+from collections import OrderedDict
+
 from flask import Flask, request, jsonify, send_file, render_template
 
 # Portable paths: ROOT = env DRUM_AI_ROOT, else parent of this app/ dir;
@@ -315,7 +317,11 @@ def _load_state():
                 STATE[k] = d[k]
         if STATE.get("running"):
             owner = STATE.get("service_pid")
-            if owner and int(owner) != os.getpid() and _pid_alive(owner):
+            try:
+                owner_pid = int(owner)
+            except (TypeError, ValueError):
+                owner_pid = 0   # 坏值按“无主”处理，别让一行脏数据崩掉服务启动
+            if owner_pid and owner_pid != os.getpid() and _pid_alive(owner):
                 # 另一个仍在运行的服务实例（如 8756 与 8757 并存）拥有这个任务，
                 # 不要碰它的状态，也不要杀它的进程树。
                 pass
@@ -346,18 +352,76 @@ def _load_state():
         STATE["service_pid"] = os.getpid()
 
 
-def tail_log(n=40):
+# job.log 全文缓存：/api/status 一轮里 tail_log/_last_device/_detected_bpm/_hints/
+# log_mtime 共用一次读取（旧实现每轮全量读 4 遍）。按 (路径, mtime_ns, size) 判失效，
+# 文件没变就直接复用；write_log / 启动清空会主动失效兜底。
+_LOG_CACHE = {"key": None, "text": "", "mtime": None}
+_LOG_CACHE_LOCK = threading.Lock()
+
+
+def _log_cache_invalidate():
+    with _LOG_CACHE_LOCK:
+        _LOG_CACHE["key"] = None
+
+
+def _log_cache_key():
+    try:
+        st = os.stat(LOG_FILE)
+    except OSError:
+        return None
+    return (LOG_FILE, st.st_mtime_ns, st.st_size)
+
+
+def _log_text_cached():
+    """job.log 全文（缓存优先）。读不到时返回空串，与旧的逐次读盘行为一致。"""
+    key = _log_cache_key()
+    if key is not None:
+        with _LOG_CACHE_LOCK:
+            if _LOG_CACHE["key"] == key:
+                return _LOG_CACHE["text"]
     try:
         with open(LOG_FILE, "r", encoding="utf-8", errors="replace") as f:
-            lines = f.readlines()
-        return "".join(lines[-n:])
+            text = f.read()
     except Exception:
+        text = ""
+    try:
+        mtime = os.path.getmtime(LOG_FILE)
+    except Exception:
+        mtime = None
+    if key is not None:
+        with _LOG_CACHE_LOCK:
+            _LOG_CACHE["key"] = key
+            _LOG_CACHE["text"] = text
+            _LOG_CACHE["mtime"] = mtime
+    return text
+
+
+def _log_mtime_cached():
+    """job.log 的 mtime（epoch 秒）；文件不存在返回 None。优先用全文缓存记录的那次 stat。"""
+    key = _log_cache_key()
+    if key is None:
+        return None
+    _log_text_cached()
+    with _LOG_CACHE_LOCK:
+        if _LOG_CACHE["key"] == key and _LOG_CACHE["mtime"] is not None:
+            return _LOG_CACHE["mtime"]
+    try:
+        return os.path.getmtime(LOG_FILE)
+    except Exception:
+        return None
+
+
+def tail_log(n=40):
+    text = _log_text_cached()
+    if not text:
         return ""
+    return "".join(text.splitlines(keepends=True)[-n:])
 
 
 def write_log(text):
     with open(LOG_FILE, "a", encoding="utf-8") as f:
         f.write(text + "\n")
+    _log_cache_invalidate()   # 追加后立即失效，防同刻 mtime+size 撞缓存
 
 
 STAGES = {1: "输出歌曲信息 / 检测速度", 2: "分离鼓轨 (Demucs)", 3: "转录 MIDI (ADTOF)", 4: "校正小节线 / 生成乐谱", 5: "渲染 PDF (MuseScore)", 6: "合成鼓声音频"}
@@ -406,6 +470,7 @@ def _run_job_body(song_path, bpm, mode):
     try:
         STATE["audio_sec"] = _audio_seconds(song_path)
         open(LOG_FILE, "w", encoding="utf-8").close()
+        _log_cache_invalidate()
         write_log("%s  [0/6] 任务启动: %s（模式：%s）"
                   % (time.strftime("%H:%M:%S"), os.path.basename(song_path), MODES[mode]["name"]))
         with _lock:
@@ -692,10 +757,7 @@ def status():
     except Exception:
         s["beat_source"] = ""
     # heartbeat: mtime of the job log (seconds, epoch) + whether the pipeline pid is alive
-    try:
-        s["log_mtime"] = os.path.getmtime(LOG_FILE)
-    except Exception:
-        s["log_mtime"] = None
+    s["log_mtime"] = _log_mtime_cached()
     s["alive"] = _job_pid_alive(s)
     s["device"] = _last_device()
     s["detected_bpm"] = _detected_bpm()
@@ -723,8 +785,12 @@ def _result_files(base):
     if os.path.exists(xml):
         out.append({"kind": "xml", "name": base + ".musicxml", "size": os.path.getsize(xml)})
     try:
+        # 最终 MIDI 兼容两种命名：固定速度路线的 _<bpm>.mid、拍栅格路线的 .beats_al.mid；
+        # 排除中间产物（原始转录 <base>.mid、对齐前 <base>.beats.mid、后处理 <base>._pp.mid）。
+        # 此前只认 startswith(base+"_")，拍栅格（默认开启）产出的点分隔命名在结果列表里永远缺失。
         cands = [fn for fn in os.listdir(midis_dir())
-                 if fn.startswith(base + "_") and fn.endswith(".mid")]
+                 if fn.startswith(base) and fn.endswith(".mid")
+                 and fn not in (base + ".mid", base + ".beats.mid", base + "._pp.mid")]
         if cands:
             latest = max(cands, key=lambda fn: os.path.getmtime(os.path.join(midis_dir(), fn)))
             out.append({"kind": "mid", "name": latest,
@@ -831,9 +897,7 @@ def _last_device():
         import re
         if _DEVICE_RE is None:
             _DEVICE_RE = re.compile(r"\[2/6\][^\n]*?(GPU|CPU)")
-        with open(LOG_FILE, "r", encoding="utf-8", errors="replace") as f:
-            text = f.read()
-        m = _DEVICE_RE.search(text)
+        m = _DEVICE_RE.search(_log_text_cached())
         if m:
             return m.group(1)
     except Exception:
@@ -860,8 +924,7 @@ def _detected_bpm():
                 r"校正为 ([\d.]+) BPM",
                 r"中位速度 ([\d.]+) BPM",
             )]
-        with open(LOG_FILE, "r", encoding="utf-8", errors="replace") as f:
-            text = f.read()
+        text = _log_text_cached()
         best = None
         for rx in _BPM_RE:
             for m in rx.finditer(text):
@@ -1156,9 +1219,10 @@ def download():
         p = os.path.join(out_dir(), base + ".musicxml")
         dl = base + ".musicxml"
     elif kind == "mid":
-        # most recent _<bpm>.mid
+        # 最终 MIDI：兼容 _<bpm>.mid 与 .beats_al.mid 两种命名，排除中间产物，取最新
         cands = [os.path.join(midis_dir(), fn) for fn in os.listdir(midis_dir())
-                 if fn.startswith(base + "_") and fn.endswith(".mid")]
+                 if fn.startswith(base) and fn.endswith(".mid")
+                 and fn not in (base + ".mid", base + ".beats.mid", base + "._pp.mid")]
         if not cands:
             return jsonify({"ok": False, "error": "mid not found"}), 404
         p = max(cands, key=os.path.getmtime)
@@ -1282,12 +1346,10 @@ def reveal():
     raw = (body.get("path") or "").strip()
     if not raw:
         return jsonify({"ok": False, "error": "no path"}), 400
-    ap = os.path.abspath(raw)
+    ap = _real_norm(raw)
     if not os.path.exists(ap):
         return jsonify({"ok": False, "error": "文件不存在（可能已被删除）"}), 404
-    roots = [os.path.abspath(d) for d in (out_dir(), midis_dir(), songs_dir(),
-             cfg_get("stemsDir") or os.path.join(cfg_get("dataDir") or ROOT, "stems"))]
-    if not any(ap.lower().startswith(r.lower()) for r in roots):
+    if not _within_roots(ap, _data_roots()):
         return jsonify({"ok": False, "error": "只能打开数据目录内的文件"}), 403
     try:
         if os.path.isdir(ap):
@@ -1311,11 +1373,32 @@ def _pdf_file(base):
     return os.path.join(out_dir(), base + "_鼓谱.pdf")
 
 
+def _real_norm(p):
+    """realpath 归一：解析符号链接/目录联接后再绝对化，路径白名单校验统一用它。"""
+    return os.path.realpath(os.path.abspath(p))
+
+
+def _within_roots(ap, roots):
+    """ap 是否等于 roots 之一或落在其目录内。
+
+    前缀必须按“目录分隔符 + 结尾”比对（旧 P2#4）：否则 D:\\music 会误放行
+    D:\\music-secret。入参先经 _real_norm 归一；Windows 大小写不敏感，统一 lower。
+    """
+    ap_l = ap.lower()
+    for r in roots:
+        r_l = r.lower().rstrip(os.sep)
+        if ap_l == r_l or ap_l.startswith(r_l + os.sep):
+            return True
+    return False
+
+
+def _data_roots():
+    return [_real_norm(d) for d in (out_dir(), midis_dir(), songs_dir(),
+            cfg_get("stemsDir") or os.path.join(cfg_get("dataDir") or ROOT, "stems"))]
+
+
 def _in_data_dirs(path):
-    roots = [os.path.abspath(d) for d in (out_dir(), midis_dir(), songs_dir(),
-             cfg_get("stemsDir") or os.path.join(cfg_get("dataDir") or ROOT, "stems"))]
-    ap = os.path.abspath(path)
-    return any(ap.lower().startswith(r.lower()) for r in roots)
+    return _within_roots(_real_norm(path), _data_roots())
 
 
 @app.route("/api/pdf/info")
@@ -1377,7 +1460,7 @@ def open_with_system():
     raw = (body.get("path") or "").strip()
     if not raw:
         return jsonify({"ok": False, "error": "no path"}), 400
-    ap = os.path.abspath(raw)
+    ap = _real_norm(raw)
     if not os.path.isfile(ap):
         return jsonify({"ok": False, "error": "文件不存在"}), 404
     if not _in_data_dirs(ap):
@@ -1496,6 +1579,9 @@ def _queue_load_locked():
     出现的 running 项是本进程的真实任务，若每次读取都重置，status 轮询、
     cancel 等只读路径会在任务收尾瞬间把它“复活”成 pending，队列随即重跑
     同一首歌（实测表现为 cancel 后同一秒任务重启）。
+    重置只针对 owner 进程已死的项（_advance_body 认领时写入 owner=服务 pid）：
+    其他存活实例（如 8756 与 8757 并存）正在跑的项绝不能重置，否则两个实例
+    各自开一条管线互踩产物（P2-5）。无 owner 的旧格式项视为已死，照旧回退。
     """
     global _QUEUE_RESET_DONE
     q = _read_json(QUEUE_FILE, {"items": [], "paused": False})
@@ -1508,12 +1594,21 @@ def _queue_load_locked():
         if not STATE.get("running"):
             changed = False
             for it in q["items"]:
-                if it.get("state") == "running":
+                if it.get("state") == "running" and not _queue_owner_alive(it):
                     it["state"] = "pending"
+                    it.pop("owner", None)
                     changed = True
             if changed:
                 _write_json(QUEUE_FILE, q)
     return q
+
+
+def _queue_owner_alive(item):
+    """队列 running 项的认领者服务进程是否还活着（与 _job_pid_alive 同款探活）。
+
+    无 owner（旧版本写入）或 owner 进程已死 → False：重启恢复可安全回退 pending。
+    """
+    return _pid_alive(item.get("owner"))
 
 
 def _queue_list():
@@ -1565,6 +1660,7 @@ def _advance_body():
             _queue_save_locked(q)
             return
         nxt["state"] = "running"
+        nxt["owner"] = os.getpid()   # 认领者 pid：其他实例的重启恢复据此跳过存活实例的项（P2-5）
         _queue_save_locked(q)
     with _lock:
         STATE["device_override"] = nxt.get("device") or None
@@ -1575,12 +1671,15 @@ def _advance_body():
         started = False
     if not started:
         # 抢占失败（手动 start 抢先）或执行抛错：让出，回到待处理。
+        # 只回退自己（或无主）认领的 running 项：同一首歌若已被别的实例认领，绝不能动它。
         # 重新读盘再改，避免拿旧快照覆盖期间的并发修改（如已被标成 failed/done）
         with _queue_lock:
             q = _queue_load_locked()
             for it in q["items"]:
-                if it.get("song") == nxt["song"] and it.get("state") == "running":
+                if (it.get("song") == nxt["song"] and it.get("state") == "running"
+                        and it.get("owner") in (None, os.getpid())):
                     it["state"] = "pending"
+                    it.pop("owner", None)
                     break
             _queue_save_locked(q)
 
@@ -1715,8 +1814,7 @@ def _hints():
     if STATE.get("running") or not STATE.get("error"):
         return []
     try:
-        with open(LOG_FILE, "r", encoding="utf-8", errors="replace") as f:
-            tail = f.read()[-8000:].lower()
+        tail = _log_text_cached()[-8000:].lower()
     except Exception:
         tail = ""
     mode = STATE.get("mode") or "full"
@@ -1997,7 +2095,14 @@ def _pdf_layout(pdf_path):
     （实测同一首里每个十六分位 1.5~30pt 不等），用时间线性插值会让光标越走越偏。
     """
     import pymupdf
-    doc = pymupdf.open(pdf_path)
+    # with 包裹：Document 靠 GC 才释放文件句柄，长会话反复请求会累积（旧 P3-9）；
+    # 解析正文拆到 _pdf_layout_pages，离开 with 前文档一定被关闭。
+    with pymupdf.open(pdf_path) as doc:
+        return _pdf_layout_pages(doc)
+
+
+def _pdf_layout_pages(doc):
+    """_pdf_layout 的正文：从已打开的 Document 提取版面几何。"""
     pages = []
     for pno, page in enumerate(doc, 1):
         hl, vl = [], []
@@ -2096,6 +2201,13 @@ def _pdf_layout(pdf_path):
     return pages
 
 
+# /api/scorelayout 结果缓存：同一份 PDF（mtime+size 未变）的叠光标重复请求直接复用，
+# 不再每次重开 PDF 解析。命中/写入在锁内，解析在锁外；上限 8 份防内存膨胀。
+_LAYOUT_CACHE_MAX = 8
+_layout_cache = OrderedDict()
+_layout_cache_lock = threading.Lock()
+
+
 @app.route("/api/scorelayout")
 def scorelayout():
     """PDF 版谱面的几何（系统行 + 小节线），供前端叠光标。"""
@@ -2103,10 +2215,29 @@ def scorelayout():
     pdf_p = os.path.join(out_dir(), base + "_鼓谱.pdf")
     if not base or not os.path.isfile(pdf_p):
         return jsonify({"ok": False, "error": "no pdf"}), 404
+    key = None
     try:
-        pages = _pdf_layout(pdf_p)
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        st = os.stat(pdf_p)
+        key = (os.path.abspath(pdf_p), st.st_mtime_ns, st.st_size)
+    except OSError:
+        key = None
+    pages = None
+    if key is not None:
+        with _layout_cache_lock:
+            pages = _layout_cache.get(key)
+            if pages is not None:
+                _layout_cache.move_to_end(key)
+    if pages is None:
+        try:
+            pages = _pdf_layout(pdf_p)
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)}), 500
+        if key is not None:
+            with _layout_cache_lock:
+                _layout_cache[key] = pages
+                _layout_cache.move_to_end(key)
+                while len(_layout_cache) > _LAYOUT_CACHE_MAX:
+                    _layout_cache.popitem(last=False)
     total = sum(max(0, len(s["bounds"]) - 1) for p in pages for s in p["systems"])
     return jsonify({"ok": True, "base": base, "pages": pages, "bars_detected": total})
 
