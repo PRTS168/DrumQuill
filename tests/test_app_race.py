@@ -54,14 +54,17 @@ def test_run_job_runs_body_when_idle(monkeypatch):
 
     called = {"n": 0}
 
-    def _fake_body(song_path, bpm, mode):
+    def _fake_body(song_path, bpm, mode, device=None):
         called["n"] += 1
+        called["device"] = device
         return True
 
     monkeypatch.setattr(app, "_run_job_body", _fake_body)
-    # 空闲时正常开跑、执行体被调用一次
+    # 空闲时正常开跑、执行体被调用一次；无显式 device 时写 None（不覆盖用户手选）
     assert app.run_job("a.wav", 100, "full") is True
     assert called["n"] == 1
+    assert app.STATE["device_override"] is None
+    assert called["device"] is None
 
 
 def test_run_job_releases_slot_when_prep_fails(monkeypatch):

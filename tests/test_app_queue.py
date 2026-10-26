@@ -89,11 +89,11 @@ def test_advance_body_falls_back_to_pending_when_acquire_fails(iso, monkeypatch)
     (songs / "a.wav").write_bytes(b"x")
     monkeypatch.setattr(app, "songs_dir", lambda: str(songs))
     monkeypatch.setattr(app, "run_job", lambda *a, **k: False)  # 手动 start 抢先
-    app.STATE["device_override"] = "gpu"  # 证明 device 更新确实执行过
     _write_queue([{"song": "a.wav", "mode": "full", "bpm": None, "state": "pending"}])
     app._advance_body()
     assert _read_queue()["items"][0]["state"] == "pending"
-    assert app.STATE["device_override"] is None
+    # 新语义：device 由 run_job 在抢占成功后写入；抢占失败时不再预写/覆盖
+    assert "device" not in _read_queue()["items"][0] or _read_queue()["items"][0].get("device") is None
 
 
 def test_advance_body_marks_missing_song(iso, monkeypatch):

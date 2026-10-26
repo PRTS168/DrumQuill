@@ -90,9 +90,15 @@
         var tag = it.state === 'done' ? '完成' : it.state === 'running' ? '进行中'
                 : it.state === 'failed' ? '失败'
                 : it.state === 'missing' ? '找不到文件' : '等待';
+        var dur = '';
+        if (it.duration != null && (it.state === 'done' || it.state === 'failed')) {
+          var dm = Math.floor(it.duration / 60), ds = it.duration % 60;
+          dur = '<span class="qmeta" style="color:#64748b;font-size:12px;margin-left:auto;padding-right:10px">' +
+                (dm ? dm + ' 分 ' : '') + ds + ' 秒</span>';
+        }
         return '<div class="qrow">' +
           '<span class="qname">' + esc(it.song) + '</span>' +
-          '<span class="badge ' + cls + '">' + tag + '</span>' +
+          '<span class="badge ' + cls + '">' + tag + '</span>' + dur +
           '<button class="btn ghost sm" data-dqrm="' + esc(it.song) + '">移除</button></div>';
       }).join('') + '</div>';
     } else {

@@ -456,19 +456,59 @@ def _try_acquire_job(song_path, bpm, mode):
         return True
 
 
-def run_job(song_path, bpm, mode="full"):
-    """队列推进路径：抢占成功才执行，返回是否真正开跑。"""
+def _archive_job_log():
+    """清空 job.log 前把它归档到 app\\logs\\（保留最近 10 份）——崩溃现场不再被下一任务冲掉。"""
+    try:
+        if not os.path.isfile(LOG_FILE) or os.path.getsize(LOG_FILE) == 0:
+            return
+        log_dir = os.path.join(APP_DIR, "logs")
+        os.makedirs(log_dir, exist_ok=True)
+        stamp = "%s-%03d" % (time.strftime("%Y%m%d-%H%M%S"), int((time.time() % 1) * 1000))
+        k = 0
+        dst = os.path.join(log_dir, "job-%s-%03d.log" % (stamp, k))
+        while os.path.exists(dst):          # 同戳冲突：递增序号（全序号命名保证字典序=时间序）
+            k += 1
+            dst = os.path.join(log_dir, "job-%s-%03d.log" % (stamp, k))
+        shutil.copyfile(LOG_FILE, dst)
+        olds = sorted(f for f in os.listdir(log_dir) if f.startswith("job-") and f.endswith(".log"))
+        for f in olds[:-10]:
+            try:
+                os.remove(os.path.join(log_dir, f))
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+def _schedule_advance_fallback(delay=5.0):
+    """后端自驱动兑底：任务收尾后延迟尝试推进队列（页面全关/前端轮询停止也能接续）。
+    _queue_advance_if_idle 自带 _ADVANCING/running 双防重，多次触发无害。"""
+    def _go():
+        time.sleep(delay)
+        try:
+            _queue_advance_if_idle()
+        except Exception:
+            pass
+    threading.Thread(target=_go, daemon=True).start()
+
+
+def run_job(song_path, bpm, mode="full", device=None):
+    """队列推进路径：抢占成功才执行，返回是否真正开跑。device 在抢占成功后写入状态。"""
     global STATE
     if mode not in MODES:
         mode = "full"
     if not _try_acquire_job(song_path, bpm, mode):
         return False
-    return _run_job_body(song_path, bpm, mode)
+    if device in ("cpu", "cuda", "gpu"):
+        with _lock:
+            STATE["device_override"] = device
+    return _run_job_body(song_path, bpm, mode, device=device)
 
 
-def _run_job_body(song_path, bpm, mode):
+def _run_job_body(song_path, bpm, mode, device=None):
     try:
         STATE["audio_sec"] = _audio_seconds(song_path)
+        _archive_job_log()
         open(LOG_FILE, "w", encoding="utf-8").close()
         _log_cache_invalidate()
         write_log("%s  [0/6] 任务启动: %s（模式：%s）"
@@ -481,8 +521,9 @@ def _run_job_body(song_path, bpm, mode):
                "-SongPath", song_path]
         if bpm:
             cmd += ["-BPM", str(bpm)]
-        if STATE.get("device_override"):
-            cmd += ["-Device", STATE["device_override"]]
+        eff_device = device if device in ("cpu", "cuda", "gpu") else STATE.get("device_override")
+        if eff_device:
+            cmd += ["-Device", eff_device]
         cmd += list(MODES[mode]["flags"])
         env = dict(os.environ)
         env["PYTHONUTF8"] = "1"
@@ -495,6 +536,7 @@ def _run_job_body(song_path, bpm, mode):
             STATE["stage_name"] = "启动失败: %s" % e
         _save_state()
         write_log("[x/6] 启动准备失败: %s" % e)
+        _schedule_advance_fallback()   # 启动失败释放任务槽后，让队列继续后续任务
         raise
 
     def watcher(proc):
@@ -541,7 +583,15 @@ def _run_job_body(song_path, bpm, mode):
                     STATE["error"] = None if rc == 0 else "pipeline exit code %d" % rc
             write_log("[x/6] exit code: %d  finished: %s" % (rc, STATE["finished"]))
             _record_run()
-            _mark_queue_state(STATE.get("song"), "done" if rc == 0 else "failed")
+            _try = None
+            try:
+                st0 = STATE.get("started_at")
+                if st0:
+                    _try = max(0, int(time.time() - time.mktime(time.strptime(st0, "%Y-%m-%d %H:%M:%S"))))
+            except Exception:
+                _try = None
+            _mark_queue_state(STATE.get("song"), "done" if rc == 0 else "failed", duration=_try)
+            _schedule_advance_fallback()   # 后端自驱动兑底：页面全关也能接续队列
             _save_state()
 
     try:
@@ -680,7 +730,7 @@ def start():
         if acquired:
             with _lock:
                 STATE["device_override"] = device
-            _run_job_body(path, bpm, mode)
+            _run_job_body(path, bpm, mode, device=device)
 
     threading.Thread(target=_go, daemon=True).start()
     gate.wait(timeout=10)
@@ -1302,6 +1352,7 @@ def delete_artifacts():
     if STATE.get("running") and os.path.splitext(os.path.basename(STATE.get("song") or ""))[0] == base:
         return jsonify({"ok": False, "error": "这首歌正在处理中，结束或取消后再删"}), 409
     keep_source = body.get("keep_source", True)
+    only_intermediate = bool(body.get("only_intermediate"))
     one = os.path.basename((body.get("name") or "").strip())
     if one:
         # 删除单个产物（产物管理里每行一个删除按钮）
@@ -1321,6 +1372,8 @@ def delete_artifacts():
     for it in _artifact_list(base):
         if it["kind"] == "source" and keep_source:
             continue
+        if only_intermediate and it["kind"] in ("pdf", "xml", "audio"):
+            continue          # 只清中间产物：成品与源音频保留
         try:
             os.remove(it["path"])
             removed.append(it["name"])
@@ -1662,11 +1715,11 @@ def _advance_body():
         nxt["state"] = "running"
         nxt["owner"] = os.getpid()   # 认领者 pid：其他实例的重启恢复据此跳过存活实例的项（P2-5）
         _queue_save_locked(q)
-    with _lock:
-        STATE["device_override"] = nxt.get("device") or None
     try:
-        # run_job（内部会取 _lock）必须在 _queue_lock 之外调用
-        started = run_job(path, nxt.get("bpm") or None, nxt.get("mode") or "full")
+        # run_job（内部会取 _lock）必须在 _queue_lock 之外调用；
+        # device 由 run_job 在抢占成功后写入，队列竞争不再覆盖手动任务的设备选择
+        started = run_job(path, nxt.get("bpm") or None, nxt.get("mode") or "full",
+                          device=(nxt.get("device") or None))
     except Exception:
         started = False
     if not started:
@@ -1684,7 +1737,7 @@ def _advance_body():
             _queue_save_locked(q)
 
 
-def _mark_queue_state(song, state):
+def _mark_queue_state(song, state, duration=None):
     # 调用方不得持有 _lock（_lock 与 _queue_lock 不嵌套）；status 的 zombie 守卫
     # 已改为先释放 _lock 再进来
     with _queue_lock:
@@ -1693,6 +1746,8 @@ def _mark_queue_state(song, state):
         for it in q["items"]:
             if it.get("song") == song and it.get("state") in ("running", "pending"):
                 it["state"] = state
+                if duration is not None:
+                    it["duration"] = int(duration)
                 changed = True
                 break
         if changed:
@@ -1706,6 +1761,17 @@ def queue_api():
     body = request.get_json(silent=True) or {}
     action = (body.get("action") or "").lower()
     if action == "add":
+        # 入参清洗（与 /api/start 同口径）：mode 白名单回退 full，bpm 整数化后限 20–400
+        mode = (body.get("mode") or "full").strip().lower()
+        if mode not in MODES:
+            mode = "full"
+        bpm = body.get("bpm")
+        try:
+            bpm = int(float(bpm)) if bpm else None
+        except (TypeError, ValueError):
+            bpm = None
+        if bpm is not None and not (20 <= bpm <= 400):
+            bpm = None
         names = body.get("songs") or ([body["song"]] if body.get("song") else [])
         added = 0
         with _queue_lock:
@@ -1716,8 +1782,8 @@ def queue_api():
                     continue
                 if any(it.get("song") == n and it.get("state") in ("pending", "running") for it in q["items"]):
                     continue
-                q["items"].append({"song": n, "mode": body.get("mode") or "full",
-                                   "bpm": body.get("bpm") or None, "state": "pending"})
+                q["items"].append({"song": n, "mode": mode,
+                                   "bpm": bpm, "state": "pending"})
                 added += 1
             _queue_save_locked(q)
         return jsonify({"ok": True, "added": added, "queue": _queue_view()})

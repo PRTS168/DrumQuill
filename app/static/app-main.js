@@ -748,11 +748,15 @@
             '</span></div>';
         });
       });
+      var midSize = 0, midCount = 0;
+      items.forEach(function(x){ if (x.kind === 'stem' || x.kind === 'midi') { midSize += x.size; midCount++; } });
+      var midBtn = midCount ? '<button class="btn ghost sm" data-cleanupmid="'+esc(base)+'">清理中间产物（'+midCount+' 个 · '+fmtSize(midSize)+'）</button>' : '';
       var panel = document.createElement('div');
       panel.className = 'afiles';
       panel.innerHTML = '<div class="ahead"><b>'+esc(base)+'</b><span>（共 '+items.length+' 个文件）</span>' +
         '<span class="sp"></span>' +
         '<button class="btn ghost sm" data-reveal="'+esc(items[0].path.replace(/[\\/][^\\/]*$/, ''))+'">打开目录</button>' +
+        midBtn +
         '<button class="btn ghost sm" data-delsong="'+esc(base)+'">全部删除</button></div>' + body;
       row.appendChild(panel);
     }).catch(function(e){ toast('读取产物失败：'+e, true); });
@@ -1479,6 +1483,22 @@
     }
     var artBtn = e.target.closest('[data-artifacts]');
     if(artBtn){ toggleArtifacts(artBtn.dataset.artifacts, artBtn); return; }
+    var cleanupMid = e.target.closest('[data-cleanupmid]');
+    if(cleanupMid){
+      var cb = cleanupMid.getAttribute('data-cleanupmid');
+      if(!confirm('清理「'+cb+'」的中间产物？\n（分离出的 drums.wav、中间 MIDI 等；成品与源音频保留）')) return;
+      fetch('/api/delete', {method:'POST',headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({song:cb, keep_source:true, only_intermediate:true})})
+        .then(function(r){ return r.json(); })
+        .then(function(j){
+          if(!j.ok){ toast('清理失败：'+(j.error||''), true); return; }
+          toast('已清理 '+(j.removed||[]).length+' 个中间产物');
+          var row = cleanupMid.closest('.hrow');
+          if (row){ var ex = row.querySelector('.afiles'); if (ex) row.removeChild(ex); }
+        })
+        .catch(function(e2){ toast('清理失败：'+e2, true); });
+      return;
+    }
     var delSong = e.target.closest('[data-delsong]');
     if(delSong){ deleteSong(delSong.dataset.delsong); return; }
     var delItem = e.target.closest('[data-delitem]');
