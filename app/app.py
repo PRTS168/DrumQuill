@@ -1056,6 +1056,18 @@ def songs():
     return jsonify(items)
 
 
+def _find_ffprobe():
+    """ffprobe 解析：PATH 优先；整合包场景回退到包内 tools\\ffmpeg\\bin（与随包 ffmpeg 同目录）。"""
+    exe = shutil.which("ffprobe")
+    if exe:
+        return exe
+    for c in (os.path.join(ROOT, "tools", "ffmpeg", "bin", "ffprobe.exe"),
+              os.path.join(os.path.dirname(cfg_get("ffmpegPath", "") or ""), "ffprobe.exe")):
+        if c and os.path.isfile(c):
+            return c
+    return None
+
+
 @app.route("/api/probe")
 def probe():
     """歌曲时长（秒），用于界面给出可信的"预计用时"。ffprobe 缺失时返回 null。"""
@@ -1067,8 +1079,7 @@ def probe():
         return jsonify({"ok": False, "error": "file not found"}), 404
     dur = None
     try:
-        from shutil import which
-        exe = which("ffprobe")
+        exe = _find_ffprobe()
         if exe:
             r = subprocess.run([exe, "-v", "error", "-show_entries", "format=duration",
                                 "-of", "default=nw=1:nk=1", path],
@@ -1818,7 +1829,7 @@ def queue_api():
 # ---------------- ETA ----------------
 def _audio_seconds(path):
     try:
-        probe = shutil.which("ffprobe") or "ffprobe"
+        probe = _find_ffprobe() or "ffprobe"
         r = subprocess.run([probe, "-v", "error", "-show_entries", "format=duration",
                             "-of", "default=nw=1:nk=1", path],
                            capture_output=True, text=True, timeout=30,

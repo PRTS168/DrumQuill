@@ -34,14 +34,19 @@
 
 - 位置：本工具 sound/MS_Basic.sf3（约 51 MB），与 MuseScore 4 自带音色库同源
   （MuseScore 4 安装目录 sound/MS Basic_License.md 原文已核实）。
+  整合包不含 sf3（可选组件；安装器可在装有 MuseScore 4 的机器上从其目录复制）。
 - 谱系：FluidR3（Frank Wen, 2000-2002, MIT）→ FluidR3Mono（Michael Cowgill, 2014-17, MIT）
   → MuseScore_General（S. Christian Collins, 2018-19, MIT）→ MS Basic。
 - 许可：MIT，允许商用、修改与再分发，须保留版权与许可声明。
 
-## 5. ffmpeg —— LGPL-2.1+（默认构建）
+## 5. ffmpeg / ffprobe —— GPL-3.0（整合包随附 gyan.dev essentials 构建）
 
-- 官网：https://ffmpeg.org ；本工具用它做 WAV→MP3（libmp3lame）。
-- 若用户自行安装的是 GPL 构建则按 GPL-3.0；默认发行版为 LGPL。
+- 官网：https://ffmpeg.org ；本工具用它做 WAV→MP3（libmp3lame）与音频时长探测（ffprobe）。
+- 整合包随附的 ffmpeg.exe / ffprobe.exe 为 https://www.gyan.dev 的 essentials_build
+  （构建配置含 --enable-gpl，实测自报 GPL-3.0；此前本文误标 LGPL，已纠正）。
+- 依 GPL-3.0 第 4 条，随包附许可证全文（tools\ffmpeg\bin\LICENSE）与源码获取说明
+  （tools\ffmpeg\bin\FFMPEG-SOURCE.txt）：源码自 https://ffmpeg.org/download.html 获取，
+  构建配置可用 `ffmpeg -version` 核对。
 - 仅外部命令调用，不链接。
 
 ## 6. 核心 Python 库（pip 依赖）
@@ -71,3 +76,8 @@
   上述"以实际为准"）。
 - ADTOF 权重若上游后续更换许可协议（例如改为 Apache-2.0），商用禁令同步解除，
   请复查 ADTOF 官方发布页。
+
+## 8. Python 3.10 运行时（整合包 runtime\python）—— PSF License
+
+- 整合包自带 CPython 3.10.11 完整运行时，按 Python Software Foundation License 再分发；
+  官方 LICENSE.txt 已随包保留（runtime\python\LICENSE.txt）。

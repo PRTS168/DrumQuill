@@ -236,6 +236,46 @@ def _run_first_install():
         return 1
 
 
+def fix_bundled_venv_home():
+    """整合包适配：.venv 是打包机创建的，pyvenv.cfg 的 home 指向打包机的 Python；
+    换一台机器该路径不存在，venv 的 python 起不来（No Python at ...）。
+    这里把 home 改写为包内自带的 runtime\python（绝对路径）。幂等：
+    home 已有效（开发机自建 venv）则原样不动。"""
+    venv_dir = os.path.dirname(os.path.dirname(VENV_PYTHONW)) if VENV_PYTHONW else None
+    cfg_path = os.path.join(venv_dir, "pyvenv.cfg") if venv_dir else None
+    bundled = os.path.join(ROOT, "runtime", "python")
+    if not cfg_path or not os.path.isfile(cfg_path):
+        return
+    if not os.path.isfile(os.path.join(bundled, "python.exe")):
+        return  # 没有自带 runtime（纯源码/开发机），无事可做
+    try:
+        with open(cfg_path, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+    except Exception as e:
+        log("read pyvenv.cfg failed: %r" % e)
+        return
+    idx, home = -1, None
+    for i, ln in enumerate(lines):
+        s = ln.strip()
+        if s.lower().startswith("home") and "=" in s:
+            home = s.split("=", 1)[1].strip()
+            idx = i
+            break
+    if idx < 0:
+        return
+    home_ok = bool(home) and os.path.isabs(home) and \
+        os.path.isfile(os.path.join(home, "python.exe"))
+    if home_ok:
+        return
+    lines[idx] = "home = %s\n" % bundled
+    try:
+        with open(cfg_path, "w", encoding="utf-8", newline="") as f:
+            f.writelines(lines)
+        log("pyvenv.cfg home -> %s" % bundled)
+    except Exception as e:
+        log("write pyvenv.cfg failed: %r" % e)
+
+
 # --------------------------------------------------------------------------
 # Dependency ensure (first-run installer launch)
 # --------------------------------------------------------------------------
@@ -398,6 +438,8 @@ def wait_ready(port, timeout=READY_TIMEOUT):
 def main():
     log("=" * 60)
     log("launcher starting, exe=%s ROOT=%s" % (sys.executable, ROOT))
+    # 整合包：首次触碰 venv 之前先修好底座指向（幂等，开发机空操作）
+    fix_bundled_venv_home()
 
     # 0. resolve usable pythonw (venv first, system python fallback)
     pythonw_path = resolve_pythonw()

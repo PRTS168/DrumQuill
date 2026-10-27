@@ -2,6 +2,16 @@
 
 **操作体验与可靠性打磨。**
 
+**发布物：整合包 win64-full（解压即用，不需要联网安装）**
+- 新增整合包发布物：内置 Python 运行时、全部依赖、HTDemucs 分离模型、Beat This 拍点权重与 ffmpeg，
+  解压后双击 dist\DrumQuill\DrumQuill.exe 即用；可选组件（其他模型 / GPU 加速）仍可在设置里联网补装
+- 换机器、换路径解压都能跑：任一入口首次启动会自检并把虚拟环境底座指向包内 runtime\python（幂等，无网络行为）
+- 修复 run_pipeline.ps1 / ensure.ps1 / start_server.ps1 无 BOM 导致 GBK 机器上「一键扒谱.bat」无法运行的问题（已补 BOM）
+- run_pipeline 的 ffmpeg 探测新增包内 tools\ffmpeg\bin 回退；adtof_pytorch 改为 venv 正式安装并随包内置权重
+- 随包 ffmpeg/ffprobe（gyan essentials 构建）为 GPL-3.0：包内附许可证全文与源码获取说明，
+  third_party_licenses 同步纠正（此前误标 LGPL）；ffprobe 探测增加包内回退，时长预估开箱可用
+- start.bat / 启动扒谱.bat 在无 Python 的机器上直接拉起包内启动器 exe（原先只试系统 Python，会静默失效）
+
 **操作体验**
 - 队列自驱动兑底：任务收尾/启动失败后自动推进队列——关掉页面也能整夜连跑，不再因浏览器关闭而停摆
 - 队列页显示每首已完成/失败任务的耗时

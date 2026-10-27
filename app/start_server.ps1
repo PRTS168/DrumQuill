@@ -7,6 +7,8 @@ $ErrorActionPreference = "Continue"
 $ROOT = $env:DRUM_AI_ROOT
 if (-not $ROOT) { $ROOT = Split-Path $PSScriptRoot -Parent }
 $APP_DIR = Join-Path $ROOT "app"
+# 整合包：pyvenv.cfg 的 home 在别的机器上无效时改写为包内 runtime\python（幂等，开发机空操作）
+. (Join-Path (Split-Path $PSScriptRoot -Parent) "bootstrap\fix_venv_home.ps1") -Root $ROOT
 
 $cfg = @{}
 $cfgPath = Join-Path $ROOT "config.json"

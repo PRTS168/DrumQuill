@@ -1,9 +1,15 @@
 ' silent-launch.vbs - start Drum AI silently (no console windows)
-' py -3 / python -> app\launcher.py -> pythonw service + browser/window
+' Integrated package: launch dist\DrumQuill\DrumQuill.exe directly when present
+' (no system Python needed). Dev machines: py/python -> app\launcher.py chain.
 Set sh = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
 base = fso.GetParentFolderName(WScript.ScriptFullName)   ' bootstrap\
 root = fso.GetParentFolderName(base)                      ' project root
+exe = root & "\dist\DrumQuill\DrumQuill.exe"
+If fso.FileExists(exe) Then
+    sh.Run """" & exe & """", 1, False
+    WScript.Quit 0
+End If
 L = """" & root & "\app\launcher.py"""
 
 rc = sh.Run("cmd /c py -3 " & L & " 2>nul", 0, True)

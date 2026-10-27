@@ -61,6 +61,8 @@ if ("$venvDir" -match '(?i)[\\/]Scripts[\\/]pythonw?\.exe$') {
     $venvDir = Split-Path (Split-Path $venvDir -Parent) -Parent
 }
 $venvPy  = Join-Path $venvDir "Scripts\python.exe"
+# 整合包：pyvenv.cfg 的 home 在别的机器上无效时改写为包内 runtime\python（幂等，开发机空操作）
+. (Join-Path $PSScriptRoot "bootstrap\fix_venv_home.ps1") -Root $ROOT
 if (-not (Test-Path $venvPy)) {
     Write-Host "[!] 未找到虚拟环境 Python：$venvPy"
     Write-Host "    请先运行 bootstrap\install.ps1 安装依赖；或在 config.json 里把 venvDir 指向已有虚拟环境。"
@@ -93,8 +95,14 @@ if ($ffConfigured) {
     $ffmpeg = $cfg["ffmpegPath"]
     if (-not (Test-Path $ffmpeg)) { $ffmpeg = $null }
 } else {
-    $fc = Get-Command ffmpeg -ErrorAction SilentlyContinue
-    $ffmpeg = if ($fc) { $fc.Source } else { $null }
+    # 整合包：优先用包内自带的 ffmpeg（tools\ffmpeg\bin），其次才搜索 PATH
+    $ffLocal = Join-Path $ROOT "tools\ffmpeg\bin\ffmpeg.exe"
+    if (Test-Path $ffLocal) {
+        $ffmpeg = $ffLocal
+    } else {
+        $fc = Get-Command ffmpeg -ErrorAction SilentlyContinue
+        $ffmpeg = if ($fc) { $fc.Source } else { $null }
+    }
 }
 
 # ADTOF source: env DRUM_AI_ADTOF_DIR -> config adtofDir -> ROOT candidates

@@ -1,0 +1,73 @@
+DrumQuill 整合包（win64-full）使用说明
+========================================
+
+【这是什么】
+
+整合包 = 完整源码 + 启动器 exe + Python 3.10 运行时 + 全部依赖（torch CPU / demucs /
+ADTOF 转录 / Beat This 拍点）+ HTDemucs 分离模型 + Beat This 权重 + ffmpeg。
+
+解压就能用：不需要联网、不需要装 Python、不需要跑安装向导。
+（可选组件仍可在设置里联网补装：其他分离模型、GPU 加速环境等。）
+
+
+【怎么开始】
+
+1. 把整个文件夹解压到一个【可写】的位置：桌面、D:\、G:\ 都行。
+   不要放在 Program Files（程序要在自己的文件夹里写产物）。
+   路径含中文没问题；尽量避免空格和特殊符号。
+2. 双击 dist\DrumQuill\DrumQuill.exe —— 界面打开即用。
+   也可以双击根目录的 start.bat（效果相同）。
+3. 把音频文件（MP3 / WAV / FLAC / OGG / M4A / AAC）拖进「新建扒谱」→ 开始扒谱。
+4. 想不进界面批量处理：把音频拖到「一键扒谱.bat」图标上，成品在 output\ 目录。
+
+一首 4 分钟的歌：有 NVIDIA 显卡并装了 GPU 加速约 2-3 分钟；纯 CPU 视机器性能约 5-40 分钟（4 线程低配机实测 1 分钟歌约 10 分钟），关掉页面任务也会继续跑。
+
+
+【第一次运行发生了什么】
+
+- 启动器发现 .venv 的底座指向需要修正时，会自动把它指到包内的 runtime\python
+  （每次启动都会自检，幂等，无网络行为）。
+- 之后直接启动本地服务并开窗口；日志在 app\launcher.log 与 app\service.log。
+
+
+【系统要求】
+
+- Windows 10 / 11 64 位
+- 内存 ≥ 8GB（分离模型吃内存）
+- 约 2.5GB 磁盘空间（解压后）
+- 无需管理员权限；无 NVIDIA 显卡也能用（CPU 路线）
+
+
+【想更快的看这里】
+
+- GPU 加速：设置 →「GPU 加速环境」→ 安装（需 NVIDIA 显卡，联网下载约 2.4GB，
+  与本包互不干扰）。
+- 换分离模型：设置 →「分离模型」。整合包内置 HTDemucs（默认）；
+  HTDemucs-FT / 6S / MDX-Extra 可在设置里按需下载。
+
+
+【常见问题】
+
+- 杀软报毒（Trojan.Generic 之类）：未签名 exe 的启发式误报，不是投毒。
+  把本目录加入信任区即可，详见 README 的「360 / Windows Defender 报毒」一节。
+- 双击没反应：看 app\launcher.log 末尾几行；确认解压完整（.venv、runtime、models、
+  tools 四个文件夹都在）。
+- 谱面小节和音乐对不上：确认 models\torch\hub\checkpoints\beat_this-final0.ckpt
+  存在（整合包已内置）；若被杀软误删，从压缩包里恢复该文件。
+- 反馈：把歌名和 app\job.log 末尾几行一起发到 README 里的反馈邮箱。
+
+
+【目录里都是什么】
+
+  app\            服务与界面源码
+  scripts\        管线各步骤（拍点/转录/对齐/出谱/合成）
+  bootstrap\      环境自检与修复脚本
+  dist\DrumQuill\ 启动器 exe（双击它）
+  .venv\          Python 依赖（预装完毕）
+  runtime\python\ Python 3.10 运行时（venv 的底座）
+  models\         HTDemucs 分离模型 + Beat This 拍点权重
+  tools\ffmpeg\   ffmpeg 转码器
+  output\ midis\ stems\ songs\   产物与中间产物（跑完才有）
+
+许可：代码 MIT；ADTOF 模型权重为 CC BY-NC-SA 4.0（禁止商用），详见 README 与
+docs\third_party_licenses.md。

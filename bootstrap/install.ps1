@@ -28,6 +28,9 @@ Remove-Item "env:PYTHONUSERBASE" -ErrorAction SilentlyContinue
 Remove-Item "env:PIP_TARGET" -ErrorAction SilentlyContinue
 Remove-Item "env:PIP_PREFIX" -ErrorAction SilentlyContinue
 
+# 整合包：先修 venv 底座指向（pyvenv.cfg 的 home 无效时改写为包内 runtime\python；幂等）
+. (Join-Path $PSScriptRoot "fix_venv_home.ps1")
+
 # ---------------- 路径与配置 ----------------
 $ROOT = if ($env:DRUM_AI_ROOT) { $env:DRUM_AI_ROOT } else { Split-Path $PSScriptRoot -Parent }
 . (Join-Path $PSScriptRoot "download.ps1")

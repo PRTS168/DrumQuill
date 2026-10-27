@@ -15,6 +15,8 @@ $ErrorActionPreference = "Stop"
 
 $ROOT = if ($env:DRUM_AI_ROOT) { $env:DRUM_AI_ROOT } else { Split-Path $PSScriptRoot -Parent }
 $CFG_PATH = Join-Path $ROOT "config.json"
+# 整合包：pyvenv.cfg 的 home 在别的机器上无效时改写为包内 runtime\python（幂等，开发机空操作）
+. (Join-Path $PSScriptRoot "fix_venv_home.ps1") -Root $ROOT
 
 # 读取端口（config.json 的 port 字段，默认 8756）
 $port = 8756
