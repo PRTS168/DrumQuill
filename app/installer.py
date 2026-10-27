@@ -195,9 +195,18 @@ def _write_config(root, cfg):
         json.dump(cfg, f, ensure_ascii=False, indent=2)
 
 
-def _find_system_python():
-    """找一个能用 -m venv 的系统 Python（优先 py -3 启动器）。"""
-    for cand in (["py", "-3"], ["python"], ["python3"]):
+def _find_system_python(root=None):
+    """找一个能用 -m venv 的 Python（优先包内 runtime，其次 py -3 启动器/系统 Python）。
+
+    整合包场景：目标机可能没有系统 Python；包内 runtime\python 是完整 CPython，
+    可直接 -m venv（已实测），必须排在系统 Python 之前，GPU 环境后装才能在干净机器走通。
+    """
+    cands = []
+    bundled = os.path.join(root, "runtime", "python", "python.exe") if root else ""
+    if bundled and os.path.isfile(bundled):
+        cands.append([bundled])
+    cands += [["py", "-3"], ["python"], ["python3"]]
+    for cand in cands:
         try:
             r = subprocess.run(cand + ["-c", "import sys;print(sys.executable)"],
                                capture_output=True, creationflags=CREATE_NO_WINDOW, text=True, timeout=20)
@@ -207,6 +216,23 @@ def _find_system_python():
         except Exception:
             continue
     return None
+
+
+def _seed_vc_runtime(dst_dir, root):
+    """把随包的 VC++ 运行库（app-local）带进新建的解释器目录：纯净 Windows 可能没有
+    msvcp140/vcruntime140，torch/numpy 的 DLL 依赖会解析失败。这些 DLL 为微软
+    可再分发组件，随应用部署是官方允许的方式。"""
+    src = os.path.join(root, ".venv", "Scripts")
+    if not os.path.isdir(src):
+        return
+    for name in ("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll"):
+        p = os.path.join(src, name)
+        if os.path.isfile(p) and not os.path.isfile(os.path.join(dst_dir, name)):
+            try:
+                shutil.copy2(p, dst_dir)
+                _append_log("  随包运行库 -> %s" % os.path.join(dst_dir, name))
+            except Exception:
+                pass
 
 
 def _venv_py(root, cfg):
@@ -916,7 +942,7 @@ def _install_one(cid, root, cfg, venv_py, dry_run):
             py_ok = candidate
         else:
             # ---- (3b) 建独立干净 venv，自己装 CUDA 版 torch ----
-            sys_py = _find_system_python()
+            sys_py = _find_system_python(root)
             if not sys_py:
                 _append_log("  ✗ 找不到系统 Python（需 3.9+）")
                 return False
@@ -934,6 +960,7 @@ def _install_one(cid, root, cfg, venv_py, dry_run):
                 _append_log("  ✗ 创建 venv 异常: %s" % str(e)[:200])
                 return False
             gpy = os.path.join(genv, "Scripts", "python.exe")
+            _seed_vc_runtime(os.path.join(genv, "Scripts"), root)
             _pip_install(gpy, ["--upgrade", "pip"], timeout=300, what="pip 自升级")
 
             # torch + torchaudio 必须从 pytorch 官方索引装（PyPI 上 Windows 只有 CPU 版）
