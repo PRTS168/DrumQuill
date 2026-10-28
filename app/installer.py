@@ -1017,7 +1017,7 @@ def _install_one(cid, root, cfg, venv_py, dry_run):
         _append_log("  安装 demucs 及其依赖…")
         ok_demucs = _pip_install(py_ok, ["demucs==4.1.0", "--no-deps"], timeout=1800, what="demucs")
         deps = ["einops", "julius", "lameenc", "openunmix", "dora-search", "submitit",
-                "jtype", "treetable", "PyYAML", "tqdm"]
+                "sphn", "treetable", "PyYAML", "tqdm"]
         if ok_demucs:
             _pip_install(py_ok, deps, timeout=1800, what="demucs 依赖")
         chk = subprocess.run([py_ok, "-c", "import demucs, torch; print(torch.cuda.is_available())"],
