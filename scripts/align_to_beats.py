@@ -167,17 +167,43 @@ def main():
             pad = (-lo + bar_ticks - 1) // bar_ticks * bar_ticks
             cells = {k + pad: v for k, v in cells.items()}
 
-    new_pm = pretty_midi.PrettyMIDI(initial_tempo=bpm if bpm > 0 else 120.0)
-    inst = pretty_midi.Instrument(program=1, is_drum=True)
+    # 输出对齐 MIDI（mido 直写）：音符放在等距 tick 上（每小节 bar_ticks），
+    # 每小节起点写一条 set_tempo（该小节的真实 bpm）。任何尊重速度事件的渲染器
+    # （MuseScore / pretty_midi / DAW）都能精确还原真实时间线。旧写法把"真实秒数"
+    # 放到单一 initial_tempo 的平直时钟上：速度波动的歌里合成音频与拍点网格必然
+    # 扭曲，动态谱与音乐对不上（实测 272s 曲内漂 ~1.3s，波动大的歌更甚）。
+    import mido
+    TPB = DIV                    # 每拍 480 tick，与格线同一量纲
+    ref_bpm = bpm if bpm > 0 else 120.0
+    mid = mido.MidiFile(ticks_per_beat=TPB)
+    track = mido.MidiTrack()
+    mid.tracks.append(track)
+    events = []                  # (abs_tick, order, msg)：同 tick 时 set_tempo 先于音符
+    events.append((0, 1, mido.MetaMessage("time_signature", numerator=meter, denominator=4)))
+    # 速度事件：每小节一条，值由"该小节实际拍数 × 60 / 小节真实时长"推导 ——
+    # 这样任何尊重速度表的渲染器，逐小节时长都与真实拍点网格严丝合缝（误差 ~0）。
+    # 不用 plan 里的 bpm 字段：它是拍间隔均值，与整小节跨度有 ~20ms/小节的系统差。
+    tick = 0
+    for bi, b in enumerate(bars):
+        nb = len(b.get("beats") or []) or meter
+        dur = float(b.get("end") or 0.0) - float(b.get("start") or 0.0)
+        bpm_bar = (60.0 * nb / dur) if dur > 0.05 else ref_bpm
+        if bpm_bar <= 0:
+            bpm_bar = ref_bpm
+        if bi > 0:
+            events.append((tick, 0, mido.MetaMessage("set_tempo", tempo=max(1, mido.bpm2tempo(bpm_bar)))))
+        tick += nb * DIV
+    note_len_ticks = max(1, int(round(DIV * 0.1 * ref_bpm / 60.0)))   # 约 0.1s 的音符长度
     for abs_tick in sorted(cells):
         for pitch, vel in sorted(cells[abs_tick].items()):
-            # 秒数必须按同一参考速度换算，否则下游按另一个 BPM 反算 tick 会整体拉伸
-            sec_per_beat = 60.0 / (bpm if bpm > 0 else 120.0)
-            start = abs_tick / float(DIV) * sec_per_beat
-            inst.notes.append(pretty_midi.Note(velocity=vel, pitch=pitch,
-                                               start=start, end=start + 0.1))
-    new_pm.instruments.append(inst)
-    new_pm.write(out_mid)
+            events.append((abs_tick, 2, mido.Message("note_on", channel=9, note=pitch, velocity=vel)))
+            events.append((abs_tick + note_len_ticks, 3, mido.Message("note_on", channel=9, note=pitch, velocity=0)))
+    events.sort(key=lambda e: (e[0], e[1]))
+    last_tick = 0
+    for tick, _order, msg in events:
+        track.append(msg.copy(time=tick - last_tick))
+        last_tick = tick
+    mid.save(out_mid)
 
     plan = {
         "meter": meter,

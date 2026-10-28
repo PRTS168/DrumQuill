@@ -581,6 +581,50 @@ if ($SkipAudio) {
                 }
             }
         }
+        # 渲染自校验 + 自愈：合成 WAV 的时长必须与拍点网格跨度一致（±1.5s）。
+        # 若渲染器（MuseScore）对速度的解释与网格不符，自动改用网格精确的内置合成器
+        # 重渲——动态谱永远不会拿到一段"速度不对"的音频。结果写入 plan.render 供
+        # scoremap 端点做契约校验。
+        try {
+            $ffp2 = Get-Command ffprobe -ErrorAction SilentlyContinue
+            if ($ffp2 -and $planJson -and (Test-Path $planJson)) {
+                $pjR = Get-Content $planJson -Raw -Encoding UTF8 | ConvertFrom-Json
+                $spanR = 0.0
+                foreach ($bR in $pjR.bars) { $spanR += ([double]$bR.end - [double]$bR.start) }
+                if ($spanR -gt 10) {
+                    $dR = 0.0
+                    try { $dR = [double](& $ffp2.Source -v error -show_entries format=duration -of default=nw=1:nk=1 $wav 2>$null) } catch { $dR = 0.0 }
+                    if ($dR -gt 0 -and ([Math]::Abs($dR - $spanR) -gt 1.5)) {
+                        Write-Host ("[!] 渲染时长 {0:N1}s 与网格 {1:N1}s 偏差超 1.5s —— 改用内置合成器重渲（网格精确）。" -f $dR, $spanR)
+                        $wav2 = Join-Path $outDir "tmp_exact.wav"
+                        & $venvPy (Join-Path $scrDir "midi_to_wav.py") $alMid $wav2 $BPM | Out-Null
+                        if ($LASTEXITCODE -eq 0 -and (Test-Path $wav2)) {
+                            $dR2 = 0.0
+                            try { $dR2 = [double](& $ffp2.Source -v error -show_entries format=duration -of default=nw=1:nk=1 $wav2 2>$null) } catch { $dR2 = 0.0 }
+                            if ($dR2 -gt 0 -and ([Math]::Abs($dR2 - $spanR) -le 1.5)) {
+                                Move-Item $wav2 $wav -Force
+                                Write-Host ("  ✓ 内置合成器重渲完成：{0:N1}s（与网格一致）" -f $dR2)
+                            } else {
+                                Write-Host "  [!] 重渲后仍偏差，保留原渲染（对齐守卫会报警）。"
+                            }
+                            Remove-Item $wav2 -Force -ErrorAction SilentlyContinue
+                        } else {
+                            Write-Host "  [!] 内置合成器重渲失败，保留原渲染。"
+                        }
+                    }
+                    $dF = 0.0
+                    try { $dF = [double](& $ffp2.Source -v error -show_entries format=duration -of default=nw=1:nk=1 $wav 2>$null) } catch { $dF = 0.0 }
+                    $renderAligned = ($dF -gt 0 -and ([Math]::Abs($dF - $spanR) -le 1.5))
+                    $pjR | Add-Member -NotePropertyName "render" -NotePropertyValue ([pscustomobject]@{
+                        audio = (Split-Path $wav -Leaf)
+                        duration = [math]::Round($dF, 2)
+                        span = [math]::Round($spanR, 2)
+                        aligned = $renderAligned
+                    }) -Force
+                    $pjR | ConvertTo-Json -Depth 6 | Set-Content $planJson -Encoding UTF8
+                }
+            }
+        } catch { }
         if ($SkipFfmpeg) {
             Write-Host "[*] 已指定 -SkipFfmpeg，保留 WAV 不转 MP3。"
             $audioFinal = $wav

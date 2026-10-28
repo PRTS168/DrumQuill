@@ -1998,6 +1998,13 @@ def scoremap():
         return jsonify({"ok": False, "error": str(e)}), 500
     bars = plan.get("bars") or []
     meter = int(plan.get("meter") or 4)
+    # 时间线契约：t0/span 描述谱面时间线，render 来自管线自校验（渲染时长与网格是否一致）。
+    # 前端据此做时长指纹校验，音频与谱面对不上时给出警告而不是默默漂移。
+    t0 = float(bars[0].get("start") or 0.0) if bars else 0.0
+    span = 0.0
+    for b in bars:
+        span += float(b.get("end") or 0.0) - float(b.get("start") or 0.0)
+    render = plan.get("render") or {}
 
     def pack(per_bar):
         out = []
@@ -2005,6 +2012,8 @@ def scoremap():
             out.append({"i": i, "start": b.get("start"), "end": b.get("end"), "bpm": b.get("bpm"),
                         "notes": sorted(per_bar.get(i, []), key=lambda x: x["p"])})
         return jsonify({"ok": True, "base": base, "meter": meter, "source": "musicxml",
+                        "t0": round(t0, 3), "span": round(span, 3),
+                        "aligned": render.get("aligned"), "audio_duration": render.get("duration"),
                         "bars": out,
                         "audio": "/api/download?kind=audio&song=%s&preview=1" % base})
 
@@ -2051,6 +2060,8 @@ def scoremap():
         out.append({"i": i, "start": b.get("start"), "end": b.get("end"), "bpm": b.get("bpm"),
                     "notes": sorted(cells.get(i, []), key=lambda x: x["p"])})
     return jsonify({"ok": True, "base": base, "meter": meter, "source": "midi", "bars": out,
+                    "t0": round(t0, 3), "span": round(span, 3),
+                    "aligned": render.get("aligned"), "audio_duration": render.get("duration"),
                     "audio": "/api/download?kind=audio&song=%s&preview=1" % base})
 
 

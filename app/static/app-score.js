@@ -56,6 +56,23 @@
     }
     return { i: 0, frac: 0 };
   }
+  /* 时间线契约自检：音频时长与谱面跨度都对不上时，明确警告而不是让光标默默漂移。
+     后端（plan.render 自愈 + 每小节速度标记）保证正常情况下两者一致。 */
+  function checkAlign(a) {
+    try {
+      if (!a || !a.duration || !isFinite(a.duration) || !st.span) return;
+      var t0 = st.t0 || 0;
+      var off1 = Math.abs(a.duration - (st.span + t0));
+      var off2 = Math.abs(a.duration - st.span);
+      if (off1 > 2 && off2 > 2) {
+        var w = el('dqWarn');
+        if (w) {
+          w.textContent = '⚠ 当前音频与谱面时间线不一致（时长差 ' + Math.min(off1, off2).toFixed(1) + 's），动态谱光标可能不同步——建议重新生成本歌的谱面音频后再练。';
+          w.hidden = false;
+        }
+      }
+    } catch (e) {}
+  }
   function barGeo(idx) {
     if (!st.layout) return null;
     var n = 0;
@@ -527,7 +544,7 @@
     a.addEventListener('pause', syncPlay);
     a.addEventListener('ended', syncPlay);
     a.addEventListener('timeupdate', function () { if (!st.playing) paint(); });
-    a.addEventListener('loadedmetadata', function () { applyRate(a); paint(); });
+    a.addEventListener('loadedmetadata', function () { applyRate(a); paint(); checkAlign(a); });
     a.addEventListener('loadstart', function () { applyRate(a); });
     a.addEventListener('durationchange', paint);
     a.addEventListener('error', function () {
@@ -1160,6 +1177,10 @@
     st.song = name;
     try { localStorage.setItem('dqLastSong', name); } catch (e) {}
     st.bars = sm.bars || [];
+    st.t0 = sm.t0 || 0;
+    st.span = sm.span || 0;
+    st.aligned = sm.aligned;
+    st.audioDuration = sm.audio_duration || 0;
     st.layout = (lo && lo.ok) ? lo : null;
     st.page = 1;
     var mix = el('dqAudio');
