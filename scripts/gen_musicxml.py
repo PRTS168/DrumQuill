@@ -314,8 +314,13 @@ def emit(measures, markers, n_bars):
                     else:
                         # 默认：只给播放引擎换速，谱面不留记号
                         x.append('      <sound tempo="%.1f"/>' % bpm_bar)
-                    _last_tempo[0] = bpm_bar
-                    _last_tempo[1] = bar
+                elif not show_all:
+                    # 每一小节都给播放引擎真实速度（不可见）：速度波动大的歌里少写任何一
+                    # 小节，MuseScore 就会沿用旧速度渲染，合成音频与拍点网格累积漂移
+                    # （实测 60s 曲内漂 9.5s，动态谱与音乐对不上）。谱面不受影响。
+                    x.append('      <sound tempo="%.1f"/>' % bpm_bar)
+                _last_tempo[0] = bpm_bar
+                _last_tempo[1] = bar
         if (bar + 1) in markers:
             x.append('      <direction placement="above"><direction-type>'
                      '<words font-weight="bold">%s</words></direction-type></direction>' % markers[bar + 1])

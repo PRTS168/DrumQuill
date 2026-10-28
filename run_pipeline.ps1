@@ -534,6 +534,8 @@ Write-Host "[6/6] 合成鼓声音频..."
 $mp3 = Join-Path $outDir "${song}_鼓谱音频.mp3"
 $wav = Join-Path $outDir "${song}_鼓谱音频.wav"
 $audioFinal = $null
+$introPadded = $false
+$gridOffset = 0.0
 if ($SkipAudio) {
     Write-Host "[*] 已指定 -SkipAudio，跳过音频合成。"
 } elseif (-not (Test-Path $alMid)) {
@@ -555,6 +557,30 @@ if ($SkipAudio) {
         else { Write-Host "[!] 音频合成失败（exit $LASTEXITCODE），跳过音频。" }
     }
     if ($wavMade) {
+        # 动态谱对齐：谱面第 1 小节从原曲 t0 处开始，而合成音频从网格起点（0s）开始；
+        # 把原曲 [0, t0] 的前奏拼到合成音频前面，鼓谱音频即回到原曲时间线上 ——
+        # 动态谱光标、进度条、时间显示全部自然对齐（前端零改动）。
+        if ($ffmpeg -and -not $SkipFfmpeg) {
+            $t0 = 0.0
+            try {
+                if ($planJson -and (Test-Path $planJson)) {
+                    $pjI = Get-Content $planJson -Raw -Encoding UTF8 | ConvertFrom-Json
+                    if ($pjI.bars -and $pjI.bars.Count -gt 0) { $t0 = [double]$pjI.bars[0].start }
+                }
+            } catch { $t0 = 0.0 }
+            if ($t0 -gt 0.5 -and (Test-Path $SongPath)) {
+                $wavIntro = Join-Path $outDir "tmp_intro.wav"
+                & $ffmpeg -y -i $SongPath -i $wav -filter_complex "[0:a]atrim=0:$t0,asetpts=PTS-STARTPTS[a0];[a0][1:a]concat=n=2:v=0:a=1[aout]" -map "[aout]" -ac 2 -ar 44100 $wavIntro | Out-Null
+                if ($LASTEXITCODE -eq 0 -and (Test-Path $wavIntro)) {
+                    Move-Item $wavIntro $wav -Force
+                    $introPadded = $true
+                    $gridOffset = $t0
+                    Write-Host ("[*] 已把原曲前奏（0-{0:N1}s）拼入鼓谱音频：动态谱按原曲时间线对齐。" -f $t0)
+                } else {
+                    Write-Host "[!] 前奏拼接失败，保留原合成音频。"
+                }
+            }
+        }
         if ($SkipFfmpeg) {
             Write-Host "[*] 已指定 -SkipFfmpeg，保留 WAV 不转 MP3。"
             $audioFinal = $wav
@@ -575,6 +601,24 @@ if ($SkipAudio) {
 }
 
 Write-Host ""
+# 动态谱对齐守卫：合成音频的时长必须与拍点网格一致（±2s），否则动态谱会随播放漂移。
+# 这类问题历史上曾静默溜进发布版（速度标记丢失时 MuseScore 按平直速度渲染），在此显式报警。
+try {
+    if ($planJson -and (Test-Path $planJson) -and $audioFinal -and (Test-Path $audioFinal)) {
+        $planSpan = 0.0
+        $pjg = Get-Content $planJson -Raw -Encoding UTF8 | ConvertFrom-Json
+        foreach ($bg in $pjg.bars) { $planSpan += ([double]$bg.end - [double]$bg.start) }
+        $ffp = Get-Command ffprobe -ErrorAction SilentlyContinue
+        if ($planSpan -gt 10 -and $ffp) {
+            $adur = 0.0
+            try { $adur = [double](& $ffp.Source -v error -show_entries format=duration -of default=nw=1:nk=1 $audioFinal 2>$null) } catch { $adur = 0.0 }
+            $expect = $planSpan + $gridOffset
+            if ($adur -gt 0 -and ([Math]::Abs($adur - $expect) -gt 2)) {
+                Write-Host ("[!] 对齐警报：合成音频 {0:N1}s 与期望 {1:N1}s 相差超 2s —— 动态谱会与音乐漂移，请反馈（附 app\job.log）" -f $adur, $expect)
+            }
+        }
+    }
+} catch { }
 Write-Host "==== DONE ===="
 if (-not $SkipScore) {
     Write-Host "PDF      : $pdf"
