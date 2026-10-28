@@ -196,7 +196,7 @@ def _write_config(root, cfg):
 
 
 def _find_system_python(root=None):
-    """找一个能用 -m venv 的 Python（优先包内 runtime，其次 py -3 启动器/系统 Python）。
+    r"""找一个能用 -m venv 的 Python（优先包内 runtime，其次 py -3 启动器/系统 Python）。
 
     整合包场景：目标机可能没有系统 Python；包内 runtime\python 是完整 CPython，
     可直接 -m venv（已实测），必须排在系统 Python 之前，GPU 环境后装才能在干净机器走通。

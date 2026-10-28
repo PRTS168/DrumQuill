@@ -237,7 +237,7 @@ def _run_first_install():
 
 
 def fix_bundled_venv_home():
-    """整合包适配：.venv 是打包机创建的，pyvenv.cfg 的 home 指向打包机的 Python；
+    r"""整合包适配：.venv 是打包机创建的，pyvenv.cfg 的 home 指向打包机的 Python；
     换一台机器该路径不存在，venv 的 python 起不来（No Python at ...）。
     这里把 home 改写为包内自带的 runtime\python（绝对路径）。幂等：
     home 已有效（开发机自建 venv）则原样不动。"""
