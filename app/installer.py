@@ -28,6 +28,15 @@ import gzip
 # Windows 上静默启动子进程；非 Windows 回退 0（无副作用）
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
+# 宿主机 pip 环境隔离（与 bootstrap\install.ps1 同口径）：机器上若全局设了 PIP_USER=1，
+# venv 内一切 pip 安装会直接失败（--user 在 venv 里不可见）。这里在进程级清掉，
+# 服务拉起的所有 pip 子进程（含 GPU 环境的 torch 直连安装）都干净。
+os.environ["PIP_USER"] = "0"
+os.environ.pop("PIP_EXISTS_ACTION", None)
+os.environ.pop("PYTHONUSERBASE", None)
+os.environ.pop("PIP_TARGET", None)
+os.environ.pop("PIP_PREFIX", None)
+
 # ---------------- 组件定义 ----------------
 # required=True 的组件缺失时"根本没法扒谱"，其余缺失只是功能降级。
 # group 用于界面分组；skip_by_default 的组件默认不勾选（历史遗留/用不到）。
