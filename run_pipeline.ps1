@@ -557,30 +557,6 @@ if ($SkipAudio) {
         else { Write-Host "[!] 音频合成失败（exit $LASTEXITCODE），跳过音频。" }
     }
     if ($wavMade) {
-        # 动态谱对齐：谱面第 1 小节从原曲 t0 处开始，而合成音频从网格起点（0s）开始；
-        # 把原曲 [0, t0] 的前奏拼到合成音频前面，鼓谱音频即回到原曲时间线上 ——
-        # 动态谱光标、进度条、时间显示全部自然对齐（前端零改动）。
-        if ($ffmpeg -and -not $SkipFfmpeg) {
-            $t0 = 0.0
-            try {
-                if ($planJson -and (Test-Path $planJson)) {
-                    $pjI = Get-Content $planJson -Raw -Encoding UTF8 | ConvertFrom-Json
-                    if ($pjI.bars -and $pjI.bars.Count -gt 0) { $t0 = [double]$pjI.bars[0].start }
-                }
-            } catch { $t0 = 0.0 }
-            if ($t0 -gt 0.5 -and (Test-Path $SongPath)) {
-                $wavIntro = Join-Path $outDir "tmp_intro.wav"
-                & $ffmpeg -y -i $SongPath -i $wav -filter_complex "[0:a]atrim=0:$t0,asetpts=PTS-STARTPTS[a0];[a0][1:a]concat=n=2:v=0:a=1[aout]" -map "[aout]" -ac 2 -ar 44100 $wavIntro | Out-Null
-                if ($LASTEXITCODE -eq 0 -and (Test-Path $wavIntro)) {
-                    Move-Item $wavIntro $wav -Force
-                    $introPadded = $true
-                    $gridOffset = $t0
-                    Write-Host ("[*] 已把原曲前奏（0-{0:N1}s）拼入鼓谱音频：动态谱按原曲时间线对齐。" -f $t0)
-                } else {
-                    Write-Host "[!] 前奏拼接失败，保留原合成音频。"
-                }
-            }
-        }
         # 渲染自校验 + 自愈：合成 WAV 的时长必须与拍点网格跨度一致（±1.5s）。
         # 若渲染器（MuseScore）对速度的解释与网格不符，自动改用网格精确的内置合成器
         # 重渲——动态谱永远不会拿到一段"速度不对"的音频。结果写入 plan.render 供
@@ -591,6 +567,8 @@ if ($SkipAudio) {
                 $pjR = Get-Content $planJson -Raw -Encoding UTF8 | ConvertFrom-Json
                 $spanR = 0.0
                 foreach ($bR in $pjR.bars) { $spanR += ([double]$bR.end - [double]$bR.start) }
+                $t0v = 0.0
+                try { if ($pjR.bars -and $pjR.bars.Count -gt 0) { $t0v = [double]$pjR.bars[0].start } } catch { $t0v = 0.0 }
                 if ($spanR -gt 10) {
                     $dR = 0.0
                     try { $dR = [double](& $ffp2.Source -v error -show_entries format=duration -of default=nw=1:nk=1 $wav 2>$null) } catch { $dR = 0.0 }
@@ -615,9 +593,12 @@ if ($SkipAudio) {
                     $dF = 0.0
                     try { $dF = [double](& $ffp2.Source -v error -show_entries format=duration -of default=nw=1:nk=1 $wav 2>$null) } catch { $dF = 0.0 }
                     $renderAligned = ($dF -gt 0 -and ([Math]::Abs($dF - $spanR) -le 1.5))
+                    # duration 语义 = 最终交付音频（拼接前奏后）的总时长：前奏 t0 + 合成段 dF。
+                    # 前端 checkAlign 以此与 span+t0 比对，才是对最终文件的真校验。
+                    $durFinal = if ($t0v -gt 0.5) { $dF + $t0v } else { $dF }
                     $pjR | Add-Member -NotePropertyName "render" -NotePropertyValue ([pscustomobject]@{
                         audio = (Split-Path $wav -Leaf)
-                        duration = [math]::Round($dF, 2)
+                        duration = [math]::Round($durFinal, 2)
                         span = [math]::Round($spanR, 2)
                         aligned = $renderAligned
                     }) -Force
@@ -625,6 +606,30 @@ if ($SkipAudio) {
                 }
             }
         } catch { }
+        # 动态谱对齐：谱面第 1 小节从原曲 t0 处开始，而合成音频从网格起点（0s）开始；
+        # 把原曲 [0, t0] 的前奏拼到合成音频前面，鼓谱音频即回到原曲时间线上 ——
+        # 动态谱光标、进度条、时间显示全部自然对齐（前端零改动）。
+        if ($ffmpeg -and -not $SkipFfmpeg) {
+            $t0 = 0.0
+            try {
+                if ($planJson -and (Test-Path $planJson)) {
+                    $pjI = Get-Content $planJson -Raw -Encoding UTF8 | ConvertFrom-Json
+                    if ($pjI.bars -and $pjI.bars.Count -gt 0) { $t0 = [double]$pjI.bars[0].start }
+                }
+            } catch { $t0 = 0.0 }
+            if ($t0 -gt 0.5 -and (Test-Path $SongPath)) {
+                $wavIntro = Join-Path $outDir "tmp_intro.wav"
+                & $ffmpeg -y -i $SongPath -i $wav -filter_complex "[0:a]atrim=0:$t0,asetpts=PTS-STARTPTS[a0];[a0][1:a]concat=n=2:v=0:a=1[aout]" -map "[aout]" -ac 2 -ar 44100 $wavIntro | Out-Null
+                if ($LASTEXITCODE -eq 0 -and (Test-Path $wavIntro)) {
+                    Move-Item $wavIntro $wav -Force
+                    $introPadded = $true
+                    $gridOffset = $t0
+                    Write-Host ("[*] 已把原曲前奏（0-{0:N1}s）拼入鼓谱音频：动态谱按原曲时间线对齐。" -f $t0)
+                } else {
+                    Write-Host "[!] 前奏拼接失败，保留原合成音频。"
+                }
+            }
+        }
         if ($SkipFfmpeg) {
             Write-Host "[*] 已指定 -SkipFfmpeg，保留 WAV 不转 MP3。"
             $audioFinal = $wav
