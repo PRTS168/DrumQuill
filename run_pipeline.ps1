@@ -563,10 +563,11 @@ if ($SkipAudio) {
         else { Write-Host "[!] 音频合成失败（exit $LASTEXITCODE），跳过音频。" }
     }
     if ($wavMade) {
-        # 渲染自校验 + 自愈：合成 WAV 的时长必须与拍点网格跨度一致（±1.5s）。
-        # 若渲染器（MuseScore）对速度的解释与网格不符，自动改用网格精确的内置合成器
-        # 重渲——动态谱永远不会拿到一段"速度不对"的音频。结果写入 plan.render 供
-        # scoremap 端点做契约校验。
+        # 渲染自校验 + 自愈：合成 WAV 的时长必须与拍点网格跨度一致（±0.25s）。
+        # 阈值依据：前端 checkAlign 报警线 0.3s，后端守卫必须严于前端；1.5s 旧阈值
+        # 放过 MuseScore 渲染 1.29s 短尾（血液型实测翻车根因）。若渲染器（MuseScore）
+        # 对速度/尾部的解释与网格不符，自动改用网格精确的内置合成器重渲——动态谱
+        # 永远不会拿到一段"时长不对"的音频。结果写入 plan.render 供 scoremap 做契约校验。
         try {
             $ffp2 = Get-Command ffprobe -ErrorAction SilentlyContinue
             if ($ffp2 -and $planJson -and (Test-Path $planJson)) {
@@ -578,14 +579,14 @@ if ($SkipAudio) {
                 if ($spanR -gt 10) {
                     $dR = 0.0
                     try { $dR = [double](& $ffp2.Source -v error -show_entries format=duration -of default=nw=1:nk=1 $wav 2>$null) } catch { $dR = 0.0 }
-                    if ($dR -gt 0 -and ([Math]::Abs($dR - $spanR) -gt 1.5)) {
-                        Write-Host ("[!] 渲染时长 {0:N1}s 与网格 {1:N1}s 偏差超 1.5s —— 改用内置合成器重渲（网格精确）。" -f $dR, $spanR)
+                    if ($dR -gt 0 -and ([Math]::Abs($dR - $spanR) -gt 0.25)) {
+                        Write-Host ("[!] 渲染时长 {0:N2}s 与网格 {1:N2}s 偏差超 0.25s —— 改用内置合成器重渲（网格精确）。" -f $dR, $spanR)
                         $wav2 = Join-Path $outDir "tmp_exact.wav"
-                        & $venvPy (Join-Path $scrDir "midi_to_wav.py") $alMid $wav2 $BPM | Out-Null
+                        & $venvPy (Join-Path $scrDir "midi_to_wav.py") $alMid $wav2 $BPM $spanR | Out-Null
                         if ($LASTEXITCODE -eq 0 -and (Test-Path $wav2)) {
                             $dR2 = 0.0
                             try { $dR2 = [double](& $ffp2.Source -v error -show_entries format=duration -of default=nw=1:nk=1 $wav2 2>$null) } catch { $dR2 = 0.0 }
-                            if ($dR2 -gt 0 -and ([Math]::Abs($dR2 - $spanR) -le 1.5)) {
+                            if ($dR2 -gt 0 -and ([Math]::Abs($dR2 - $spanR) -le 0.25)) {
                                 Move-Item $wav2 $wav -Force
                                 Write-Host ("  ✓ 内置合成器重渲完成：{0:N1}s（与网格一致）" -f $dR2)
                             } else {
@@ -604,7 +605,7 @@ if ($SkipAudio) {
                     # 前端 checkAlign 用 durFinal 与 span+t0 比对——后端判定必须同口径。
                     # 注意：自愈段移到拼接前之后，dF 是拼接前合成段；旧注释「dF 是拼接后总长」已过时。
                     $durFinal = if ($t0v -gt 0.5) { $dF + $t0v } else { $dF }
-                    $renderAligned = ($durFinal -gt 0 -and ([Math]::Abs($durFinal - ($spanR + $t0v)) -le 1.5))
+                    $renderAligned = ($durFinal -gt 0 -and ([Math]::Abs($durFinal - ($spanR + $t0v)) -le 0.25))
                     $pjR | Add-Member -NotePropertyName "render" -NotePropertyValue ([pscustomobject]@{
                         audio = (Split-Path $wav -Leaf)
                         duration = [math]::Round($durFinal, 2)
