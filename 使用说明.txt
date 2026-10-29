@@ -18,7 +18,7 @@ DrumQuill（DrumQuill）· 使用说明
 
 
 
-   → 首次运行会自动检测并安装依赖（Python 环境 + AI 模型，约 500MB，走国内镜像）
+   → 首次运行会自动检测并安装依赖（Python 环境 + AI 模型，约 1.5GB，走国内镜像）
 
 
 
@@ -34,7 +34,7 @@ DrumQuill（DrumQuill）· 使用说明
 
 
 
-4. 点「开始扒谱」，一首 4 分钟的歌约需 15–30 分钟（CPU 模式）
+4. 点「开始扒谱」，一首 4 分钟的歌约需 5–8 分钟（CPU 模式）
 
 
 
@@ -112,7 +112,7 @@ DrumQuill（DrumQuill）· 使用说明
 
 
 
-   · 没装 MuseScore 4    → 自动用自带 SVG→PDF 出谱
+   · 没装 MuseScore 4    → 自动用内置渲染器直接出 PDF（reportlab 直绘，不经过 SVG→PDF 转换）
 
 
 

@@ -117,7 +117,7 @@ function Start-App {
         $pyth = Get-Command python -ErrorAction SilentlyContinue
         if ($py3) { & $py3 -3 $launcher; return }
         elseif ($pyth) { & $pyth $launcher; return }
-        Write-Host "[!] 未找到 Python 解释器，无法启动。请安装 Python 3.9+ 后重试。"
+        Write-Host "[!] 未找到 Python 解释器，无法启动。请安装 Python 3.10+ 后重试。"
     } elseif (Test-Path (Join-Path $ROOT "app\start_server.ps1")) {
         & powershell -ExecutionPolicy Bypass -File (Join-Path $ROOT "app\start_server.ps1")
     } else {
@@ -145,7 +145,7 @@ if ($CheckOnly) { exit 1 }
 # 缺失时：不再弹黑色安装窗口——优先起服务（系统 python 有 Flask 即可），
 # 由 Web 首启向导驱动安装；若完全无 Python，则回退命令行安装。
 if ($Launch -and -not (Get-Command python -ErrorAction SilentlyContinue) -and -not (Get-Command py -ErrorAction SilentlyContinue)) {
-    Write-Host "[安装] 未找到任何 Python，调用 install.ps1 命令行安装（需先安装 Python 3.9+）。"
+    Write-Host "[安装] 未找到任何 Python，调用 install.ps1 命令行安装（需先安装 Python 3.10+）。"
     & powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "install.ps1")
     $code = $LASTEXITCODE
     if ($code -eq 0 -and $Launch) { Start-App }

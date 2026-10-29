@@ -565,10 +565,12 @@ if ($SkipAudio) {
     }
     if ($wavMade) {
         # 渲染自校验 + 自愈：合成 WAV 的时长必须与拍点网格跨度一致（±0.25s）。
-        # 阈值依据：前端 checkAlign 报警线 0.3s，后端守卫必须严于前端；1.5s 旧阈值
-        # 放过 MuseScore 渲染 1.29s 短尾（血液型实测翻车根因）。若渲染器（MuseScore）
-        # 对速度/尾部的解释与网格不符，自动改用网格精确的内置合成器重渲——动态谱
-        # 永远不会拿到一段"时长不对"的音频。结果写入 plan.render 供 scoremap 做契约校验。
+        # 阈值依据：前端 checkAlign 指纹线 2s（app-score.js off1>2 && off2>2）且直接
+        # 消费 render.aligned（本判定 false 即告警）；后端守卫 0.25s 与 render.aligned
+        # 同口径、严于前端；1.5s 旧阈值放过 MuseScore 渲染 1.29s 短尾（血液型实测翻车
+        # 根因）。若渲染器（MuseScore）对速度/尾部的解释与网格不符，自动改用网格精确
+        # 的内置合成器重渲——动态谱永远不会拿到一段"时长不对"的音频。
+        # 结果写入 plan.render 供 scoremap 做契约校验。
         try {
             $ffp2 = Get-Command ffprobe -ErrorAction SilentlyContinue
             if ($ffp2 -and $planJson -and (Test-Path $planJson)) {
