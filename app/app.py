@@ -13,6 +13,11 @@ import threading
 import sys
 from collections import OrderedDict
 
+try:
+    import msvcrt  # Windows 跨进程文件锁（队列互斥用）
+except ImportError:  # 非 Windows 运行：退化为无跨进程锁（本应用为 Windows 专用，仅防御性兜底）
+    msvcrt = None
+
 from flask import Flask, request, jsonify, send_file, render_template
 
 # Portable paths: ROOT = env DRUM_AI_ROOT, else parent of this app/ dir;
@@ -492,6 +497,22 @@ def _schedule_advance_fallback(delay=5.0):
     threading.Thread(target=_go, daemon=True).start()
 
 
+# ---------------------------------------------------------------------------
+# device（分离设备）语义契约（后端侧，勿改行为，仅文档化）：
+#   1. /api/start 入参 device ∈ {cpu,cuda,gpu}：本次任务的显式覆盖，抢占成功后写入
+#      内存态 STATE["device_override"]（不在 STATE_KEYS，不落盘，服务重启即失）；
+#      手动 start 未传 device 时显式把它清成 None（start() 的 _go 线程内）。
+#   2. run_job（队列推进路径）只有 device ∈ {cpu,cuda,gpu} 时才写 device_override；
+#      前端队列 add 只传 songs，队列项无 device 字段 → 队列任务不带覆盖，于是
+#      _run_job_body 的 eff_device 回退到 STATE["device_override"]——即**沿用上一次手动
+#      start 选过的设备**。这是有意的“残留继承”：用户选过 GPU 后，队列里的歌不必重选；
+#      只在同一进程生命周期内有效，服务重启后回到 config.demucsDevice 默认。
+#   3. /api/status 返回的 device 字段不是上述覆盖值：它来自 _last_device()，从 job.log
+#      的「[2/6] 分离鼓轨（Demucs · GPU/CPU）」行解析，是**上一次管线实际跑在什么设备上**
+#      的只读展示（日志归档后随旧任务一起留在 app/logs/，新任务日志截断后会重新解析）。
+#   4. 真正传给管线的是 -Device <eff_device>；eff_device 为空时由 run_pipeline.ps1
+#      按 config.demucsDevice=auto 自行探测。
+# ---------------------------------------------------------------------------
 def run_job(song_path, bpm, mode="full", device=None):
     """队列推进路径：抢占成功才执行，返回是否真正开跑。device 在抢占成功后写入状态。"""
     global STATE
@@ -604,6 +625,9 @@ def _run_job_body(song_path, bpm, mode, device=None):
             STATE["pid"] = proc.pid
         _save_state()
         threading.Thread(target=watcher, args=(proc,), daemon=True).start()
+        return True   # 已成功开跑：_advance_body 据此**不回退**队列项（旧实现此处无 return，
+                      # run_job 返回 None → 队列项刚认领就被误退回 pending，UI 全程不显示
+                      # running；跨实例场景下该项会被另一个空闲实例再认领，同首歌双开管线）
     except Exception as e:
         with _lock:
             STATE["running"] = False
@@ -612,6 +636,7 @@ def _run_job_body(song_path, bpm, mode, device=None):
         _save_state()
         write_log("[x/5] 启动失败: %s" % e)
         _schedule_advance_fallback()   # Popen 失败已释放任务槽：让队列继续后续任务
+        return False
 
 
 @app.route("/api/cancel", methods=["POST"])
@@ -704,9 +729,11 @@ def start():
         mode = "full"
     if not song:
         return jsonify({"ok": False, "error": "no song"}), 400
-    # always resolve against songs_dir(): strip any directory components / traversal
+    # always resolve against songs_dir(): strip any directory components / traversal.
+    # basename("..") == ".." 会拼出 songs_dir 的父目录且 exists 为真——必须 isfile 收死，
+    # 否则一个指向目录的 SongPath 会直通 PowerShell 管线参数。
     path = os.path.join(songs_dir(), os.path.basename(song))
-    if not os.path.exists(path):
+    if not os.path.isfile(path):
         return jsonify({"ok": False, "error": "file not found: %s" % path}), 404
     try:
         bpm = int(float(bpm)) if bpm else None
@@ -1075,7 +1102,7 @@ def probe():
     if not name:
         return jsonify({"ok": False, "error": "no song"}), 400
     path = os.path.join(songs_dir(), name)
-    if not os.path.exists(path):
+    if not os.path.isfile(path):   # 同 /api/start：拒掉 ".." 拼出的目录路径
         return jsonify({"ok": False, "error": "file not found"}), 404
     dur = None
     try:
@@ -1619,9 +1646,72 @@ _ADVANCING = False
 # 队列文件的所有读-改-写都必须在 _queue_lock 内完成；它与 _lock（STATE 锁）互不嵌套：
 # 拿着 _queue_lock 时绝不取 _lock，反之亦然（run_job 必须在 _queue_lock 外调用）。
 _queue_lock = threading.Lock()
+# 跨进程队列锁：_queue_lock 只串行化本进程线程。双实例并存是设计内场景
+# （launcher 对“同 app.py 端口占用”会复用/重启，但 start_server.ps1 与手动
+# DRUM_AI_PORT 起的第二个同 ROOT 服务会共享同一个 queue.json）——两个实例的
+# advance 可能在对方落盘前各自读到同一 pending 项，各自开一条管线互踩产物。
+# 这里用 msvcrt 对 .queue.lock 第 0 字节加排他锁：进程崩溃时 OS 自动回收句柄与
+# 锁，无残留死锁；非阻塞争用拿不到就跳过本轮（下次 2s 轮询再试），绝不久等。
+QUEUE_XLOCK_FILE = os.path.join(APP_DIR, ".queue.lock")
+_QUEUE_XLOCK_RETRY = 15   # 拿不到锁时最多重试次数（×10ms ≈ 150ms，临界区本身是微秒级）
+_QUEUE_XLOCK_RETRY_DELAY = 0.01
 _QUEUE_RESET_DONE = False  # 重启恢复（running→pending）每进程只在首次读队列时做一次
 STATS_FILE = os.path.join(APP_DIR, "job_stats.json")
 STAGES_N = 6
+
+
+class _QueueXLock:
+    """queue.json 读-改-写临界区的跨进程排他锁（Windows msvcrt 字节区间）。
+
+    acquire 语义（防双开/防丢更新的关键，不要随意改宽）：
+      - 拿到锁             → 返回 True，临界区结束必须 release()；
+      - 另一实例正持锁     → 返回 False，调用方跳过本轮（下次轮询重试）；
+      - 锁文件不可用       → 返回 True（降级放行，不做跨进程互斥）：目录只读等
+        边缘环境绝不能因为开不了锁文件就让批量队列永久停摆。
+    """
+
+    def __init__(self):
+        self._fd = None
+
+    def acquire(self):
+        if msvcrt is None:
+            return True
+        try:
+            fd = os.open(QUEUE_XLOCK_FILE, os.O_RDWR | os.O_CREAT)
+        except OSError:
+            return True  # 降级：无锁可上，按“已放行”处理
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        except OSError:
+            os.close(fd)
+            return False
+        self._fd = fd
+        return True
+
+    def release(self):
+        if self._fd is None:
+            return
+        try:
+            os.lseek(self._fd, 0, os.SEEK_SET)
+            msvcrt.locking(self._fd, msvcrt.LK_UNLCK, 1)
+        except OSError:
+            pass
+        try:
+            os.close(self._fd)
+        except OSError:
+            pass
+        self._fd = None
+
+
+def _queue_xlock():
+    """尝试拿跨进程队列锁（带短重试）。返回 None 表示争用超时，调用方放弃本轮。"""
+    for _ in range(_QUEUE_XLOCK_RETRY):
+        x = _QueueXLock()
+        if x.acquire():
+            return x
+        time.sleep(_QUEUE_XLOCK_RETRY_DELAY)
+    return None
 
 
 def _read_json(path, default):
@@ -1713,26 +1803,32 @@ def _queue_advance_if_idle():
 
 def _advance_body():
     with _queue_lock:
-        q = _queue_load_locked()
-        if q["paused"]:
-            return
-        nxt = None
-        for it in q["items"]:
-            if it.get("state") == "pending":
-                nxt = it
-                break
-        if not nxt:
-            return
-        path = os.path.join(songs_dir(), nxt["song"])
-        if not os.path.isfile(path):
-            nxt["state"] = "missing"
+        x = _queue_xlock()
+        if x is None:
+            return   # 另一实例正在认领/改队列：本轮让开（2s 后 status 轮询会再试）
+        try:
+            q = _queue_load_locked()   # 拿到跨进程锁后重读：避免锁前对方已落盘
+            if q["paused"]:
+                return
+            nxt = None
+            for it in q["items"]:
+                if it.get("state") == "pending":
+                    nxt = it
+                    break
+            if not nxt:
+                return
+            path = os.path.join(songs_dir(), nxt["song"])
+            if not os.path.isfile(path):
+                nxt["state"] = "missing"
+                _queue_save_locked(q)
+                return
+            nxt["state"] = "running"
+            nxt["owner"] = os.getpid()   # 认领者 pid：其他实例的重启恢复据此跳过存活实例的项（P2-5）
             _queue_save_locked(q)
-            return
-        nxt["state"] = "running"
-        nxt["owner"] = os.getpid()   # 认领者 pid：其他实例的重启恢复据此跳过存活实例的项（P2-5）
-        _queue_save_locked(q)
+        finally:
+            x.release()
     try:
-        # run_job（内部会取 _lock）必须在 _queue_lock 之外调用；
+        # run_job（内部会取 _lock）必须在 _queue_lock/_queue_xlock 之外调用；
         # device 由 run_job 在抢占成功后写入，队列竞争不再覆盖手动任务的设备选择
         started = run_job(path, nxt.get("bpm") or None, nxt.get("mode") or "full",
                           device=(nxt.get("device") or None))
@@ -1741,33 +1837,47 @@ def _advance_body():
     if not started:
         # 抢占失败（手动 start 抢先）或执行抛错：让出，回到待处理。
         # 只回退自己（或无主）认领的 running 项：同一首歌若已被别的实例认领，绝不能动它。
-        # 重新读盘再改，避免拿旧快照覆盖期间的并发修改（如已被标成 failed/done）
+        # 重新读盘再改，避免拿旧快照覆盖期间的并发修改（如已被标成 failed/done）；
+        # 读-改-写同样在跨进程锁内，防止与另一实例的收尾标记互踩。
         with _queue_lock:
-            q = _queue_load_locked()
-            for it in q["items"]:
-                if (it.get("song") == nxt["song"] and it.get("state") == "running"
-                        and it.get("owner") in (None, os.getpid())):
-                    it["state"] = "pending"
-                    it.pop("owner", None)
-                    break
-            _queue_save_locked(q)
+            x = _queue_xlock()
+            if x is None:
+                return
+            try:
+                q = _queue_load_locked()
+                for it in q["items"]:
+                    if (it.get("song") == nxt["song"] and it.get("state") == "running"
+                            and it.get("owner") in (None, os.getpid())):
+                        it["state"] = "pending"
+                        it.pop("owner", None)
+                        break
+                _queue_save_locked(q)
+            finally:
+                x.release()
 
 
 def _mark_queue_state(song, state, duration=None):
     # 调用方不得持有 _lock（_lock 与 _queue_lock 不嵌套）；status 的 zombie 守卫
-    # 已改为先释放 _lock 再进来
+    # 已改为先释放 _lock 再进来。读-改-写在跨进程锁内，防止另一实例的 add/推进
+    # 用旧快照覆盖刚落下的 done/failed（否则该项卡在 running、owner 存活永不复活）。
     with _queue_lock:
-        q = _queue_load_locked()
-        changed = False
-        for it in q["items"]:
-            if it.get("song") == song and it.get("state") in ("running", "pending"):
-                it["state"] = state
-                if duration is not None:
-                    it["duration"] = int(duration)
-                changed = True
-                break
-        if changed:
-            _queue_save_locked(q)
+        x = _queue_xlock()
+        if x is None:
+            return
+        try:
+            q = _queue_load_locked()
+            changed = False
+            for it in q["items"]:
+                if it.get("song") == song and it.get("state") in ("running", "pending"):
+                    it["state"] = state
+                    if duration is not None:
+                        it["duration"] = int(duration)
+                    changed = True
+                    break
+            if changed:
+                _queue_save_locked(q)
+        finally:
+            x.release()
 
 
 @app.route("/api/queue", methods=["GET", "POST"])
@@ -1791,37 +1901,61 @@ def queue_api():
         names = body.get("songs") or ([body["song"]] if body.get("song") else [])
         added = 0
         with _queue_lock:
-            q = _queue_load_locked()
-            for n in names:
-                n = os.path.basename((n or "").strip())
-                if not n or not os.path.isfile(os.path.join(songs_dir(), n)):
-                    continue
-                if any(it.get("song") == n and it.get("state") in ("pending", "running") for it in q["items"]):
-                    continue
-                q["items"].append({"song": n, "mode": mode,
-                                   "bpm": bpm, "state": "pending"})
-                added += 1
-            _queue_save_locked(q)
+            x = _queue_xlock()
+            if x is None:
+                return jsonify({"ok": False, "error": "队列忙，请重试"}), 409
+            try:
+                q = _queue_load_locked()
+                for n in names:
+                    n = os.path.basename((n or "").strip())
+                    if not n or not os.path.isfile(os.path.join(songs_dir(), n)):
+                        continue
+                    if any(it.get("song") == n and it.get("state") in ("pending", "running") for it in q["items"]):
+                        continue
+                    q["items"].append({"song": n, "mode": mode,
+                                       "bpm": bpm, "state": "pending"})
+                    added += 1
+                _queue_save_locked(q)
+            finally:
+                x.release()
         return jsonify({"ok": True, "added": added, "queue": _queue_view()})
     if action == "clear":
         with _queue_lock:
-            q = _queue_load_locked()
-            cur = STATE.get("song") if STATE.get("running") else None
-            q["items"] = [it for it in q["items"] if it.get("state") == "running" and it.get("song") == cur]
-            _queue_save_locked(q)
+            x = _queue_xlock()
+            if x is None:
+                return jsonify({"ok": False, "error": "队列忙，请重试"}), 409
+            try:
+                q = _queue_load_locked()
+                cur = STATE.get("song") if STATE.get("running") else None
+                q["items"] = [it for it in q["items"] if it.get("state") == "running" and it.get("song") == cur]
+                _queue_save_locked(q)
+            finally:
+                x.release()
         return jsonify({"ok": True, "queue": _queue_view()})
     if action == "remove":
         n = os.path.basename((body.get("song") or "").strip())
         with _queue_lock:
-            q = _queue_load_locked()
-            q["items"] = [it for it in q["items"] if not (it.get("song") == n and it.get("state") != "running")]
-            _queue_save_locked(q)
+            x = _queue_xlock()
+            if x is None:
+                return jsonify({"ok": False, "error": "队列忙，请重试"}), 409
+            try:
+                q = _queue_load_locked()
+                q["items"] = [it for it in q["items"] if not (it.get("song") == n and it.get("state") != "running")]
+                _queue_save_locked(q)
+            finally:
+                x.release()
         return jsonify({"ok": True, "queue": _queue_view()})
     if action in ("pause", "resume"):
         with _queue_lock:
-            q = _queue_load_locked()
-            q["paused"] = (action == "pause")
-            _queue_save_locked(q)
+            x = _queue_xlock()
+            if x is None:
+                return jsonify({"ok": False, "error": "队列忙，请重试"}), 409
+            try:
+                q = _queue_load_locked()
+                q["paused"] = (action == "pause")
+                _queue_save_locked(q)
+            finally:
+                x.release()
         return jsonify({"ok": True, "queue": _queue_view()})
     return jsonify({"ok": False, "error": "unknown action"}), 400
 
@@ -2097,9 +2231,6 @@ def _xml_bars_to_notes(xml_path, n_bars, meter):
         except Exception:
             continue
         sid_inst = sid.rsplit("-", 1)[0]
-        for key, val in _NAME2CLS:
-            if key in "":
-                break
         if sid_inst in score_instruments:
             midi_cls[sid] = score_instruments[sid_inst]
         elif pitch in (35, 36):
