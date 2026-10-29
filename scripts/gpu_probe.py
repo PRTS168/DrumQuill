@@ -63,7 +63,10 @@ def main():
                 info["arch_ok"] = ok
                 info["archs"] = archs
             except Exception:
-                info["arch_ok"] = True
+                # 解析异常时保守判不兼容（旧写法 fail-open=True：torch 版本变化误报兼容，
+                # 运行时 Demucs 才崩）。管线据此走 CPU 段长，不赌未知架构。
+                info["arch_ok"] = False
+                info["arch_reason"] = "无法确认 CUDA 架构兼容性"
     except Exception as e:
         info["reason"] = "%s: %s" % (type(e).__name__, str(e)[:200])
 

@@ -80,14 +80,17 @@ def min_length(notes, min_len_ms):
     return notes, changed
 
 
-def swing(notes, amount):
+def swing(notes, amount, bpm=120.0):
     """把 8 分反拍延后：16 分网格 index%4==2 的位置整体右移。"""
     if amount <= 0:
         return notes, 0
     delay = max(0.0, min(1.0, amount)) * (SIXTEENTH * 2 / 3.0)   # 最多延后 2/3 个 16 分
     changed = 0
+    # 用源文件读回的真实 bpm 判"反拍"（旧写法硬编码 130 BPM：实际速度偏离 130 时
+    # 正反拍判错，会把正拍音符整体右移，groove 反而变歪）。
+    ticks_per_sec = PPQ * (bpm if bpm > 0 else 120.0) / 60.0
     for n in notes:
-        tick = int(round(n["start"] * (PPQ * 130 / 60.0)))  # 粗估；只用来判断"反拍"
+        tick = int(round(n["start"] * ticks_per_sec))
         idx = int(round(tick / float(SIXTEENTH)))
         if idx % 4 == 2:
             n["start"] += delay          # 只挪起音，保持时值不被压扁
@@ -159,7 +162,7 @@ def main():
     before = len(notes)
     notes, n_dup = dedupe(notes, opts["dedupe_ms"])
     notes, n_len = min_length(notes, opts["min_len_ms"])
-    notes, n_swing = swing(notes, opts["swing"])
+    notes, n_swing = swing(notes, opts["swing"], opts["bpm"])
     if not notes:
         print("后处理：输入没有音符，跳过（照原样复制）")
         import shutil

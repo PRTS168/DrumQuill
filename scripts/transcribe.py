@@ -155,7 +155,10 @@ def main():
         ths = [float(p) for p in parts]
 
     import torch
-    device = args.device if (args.device != "cuda" or torch.cuda.is_available()) else "cpu"
+    # 归一化：args.device 以 cuda 开头但本机无 CUDA 时（含 "cuda:0"/"cuda:1"），
+    # 旧写法只判 != "cuda" 会原样保留，model.to(device) 才崩。统一回退 cpu。
+    want_cuda = args.device.startswith("cuda")
+    device = args.device if (not want_cuda or torch.cuda.is_available()) else "cpu"
     model = create_frame_rnn_model(calculate_n_bins())
     model.eval()
     w = args.weights or get_default_weights_path()

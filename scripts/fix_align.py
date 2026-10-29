@@ -19,8 +19,6 @@ import sys
 import numpy as np
 import pretty_midi
 
-CREATE = dict()
-
 
 def parse_args(argv):
     args = {"in": None, "out": None, "bpm": 0.0, "offset": None,

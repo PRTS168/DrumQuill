@@ -269,7 +269,9 @@ def emit(measures, markers, n_bars):
     x.append('  <part id="P1">')
 
     for bar in range(n_bars):
-        items = measures.get(bar, [("rest", 0, BAR_TICKS, None, "whole")])
+        # 空小节用 measure rest（<rest measure="yes"/>）：非 4/4 拍号下 whole/half
+        # 等固定 type 与 BAR_TICKS 时长对不上（3/4 的 1440 tick 不是 whole），严格读取器告警。
+        items = measures.get(bar, [("mrest", 0, BAR_TICKS, None, None)])
         x.append('    <measure number="%d">' % (bar + 1))
         if bar > 0 and bar % BARS_PER_LINE == 0:
             x.append('      <print new-system="yes"/>')
@@ -326,6 +328,10 @@ def emit(measures, markers, n_bars):
                      '<words font-weight="bold">%s</words></direction-type></direction>' % markers[bar + 1])
 
         for kind, tick, dur, pitches, ty in items:
+            if kind == "mrest":
+                x.append('      <note><rest measure="yes"/><duration>%d</duration>'
+                         '<voice>1</voice></note>' % dur)
+                continue
             if kind == "rest":
                 x.append('      <note><rest/><duration>%d</duration><voice>1</voice>'
                          '<type>%s</type></note>' % (dur, ty))
@@ -411,6 +417,9 @@ def main():
             cells = shifted
             print("bar rotation: %d 个十六分（%.0f ms），候选前 3：%s"
                   % (rot, rot * CELL * BEAT_S / DIV * 1000, rot_scores[:3]))
+    # 安全钳制：位移/量化后若有音符落到 n_bars 之外（尾 bar 估算偏差等），
+    # 扩大小节数把它们画出来——旧写法 emit 只渲染 range(n_bars)，尾音静默消失。
+    n_bars = max(n_bars, max(cells)[0] + 1)
     measures, stats = build_measures(cells)
 
     problems = validate(measures)

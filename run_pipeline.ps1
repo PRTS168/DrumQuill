@@ -546,7 +546,8 @@ if ($SkipAudio) {
         $tmpMid = Join-Path $soundDir "tmp_render.mid"
         $tmpWav = Join-Path $outDir "tmp_render.wav"
         Copy-Item $alMid $tmpMid -Force
-        & $mscore $tmpMid -o $tmpWav | Out-Null
+        # MuseScore 进度走 stderr：PS 5.1 原生调用 stderr 需显式 2>$null，避免被当错误记录
+        & $mscore $tmpMid -o $tmpWav 2>$null | Out-Null
         if (Test-Path $tmpWav) { Copy-Item $tmpWav $wav -Force; $wavMade = $true }
         Remove-Item $tmpMid, $tmpWav -Force -ErrorAction SilentlyContinue
         if (-not $wavMade) { Write-Host "[!] MuseScore 音频渲染未产出 WAV，改用 numpy 合成器。" }

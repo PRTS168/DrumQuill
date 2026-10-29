@@ -97,19 +97,6 @@ def best_rot_continuous(times, pitches, bpm):
     return scores[0][1], scores[0][0]
 
 
-def refine_bpm(times, pitches, bpm, span=0.008, step=0.0002):
-    """在 ±span 范围内微调 BPM，返回 (最佳BPM, 分数, 相位)。"""
-    best = (bpm, best_rot_continuous(times, pitches, bpm)[1],
-            best_rot_continuous(times, pitches, bpm)[0])
-    n = int(span / step)
-    for k in range(-n, n + 1):
-        b = bpm * (1.0 + k * step)
-        rot, sc = best_rot_continuous(times, pitches, b)
-        if sc > best[2] + 1e-9:
-            best = (b, rot, sc)
-    return best
-
-
 def tightness(times, bpm):
     """平均"到最近十六分格"的偏差（以格为单位，越小越贴）。随机起音约 0.25。"""
     t = times / (60.0 / bpm) * DIV / CELL
