@@ -2,6 +2,7 @@
 (function () {
   'use strict';
   var el = function (id) { return document.getElementById(id); };
+  function stripExt(n) { return String(n == null ? '' : n).replace(/\.[a-z0-9]+$/i, ''); }
 
   /* 动态谱（会跟着音乐走的那张）只在练习页出现；扒谱页交给结果卡里的静态预览。
      全仓只有这一处决定它的显隐。 */
@@ -724,6 +725,10 @@
     cancelCountIn();
     var bar = st.bars[startBar] || st.bars[0];
     if (!bar) return;
+    /* 点了预备拍就先停掉正在放的音乐：否则倒数咔哒会叠在继续播放的曲子上，
+       倒数结束后又突兀 seek 回小节起点 */
+    var cur = curAudio();
+    if (cur && !cur.paused) { try { cur.pause(); } catch (e) {} }
     var bpm = bar.bpm || 90;
     var barDur = (bar.end || (bar.start + 2)) - bar.start;
     var beats = Math.max(2, Math.min(6, Math.round(barDur / (60 / bpm)) || 4));
@@ -1173,7 +1178,7 @@
 
   function applyScore(sm, lo, name) {
     if (!sm || !sm.ok || !(sm.bars || []).length) return false;
-    if (name === st.jobSong) window.__dqLastJobSong = name;
+    if (stripExt(name) === stripExt(st.jobSong)) window.__dqLastJobSong = name;
     st.song = name;
     try { localStorage.setItem('dqLastSong', name); } catch (e) {}
     st.bars = sm.bars || [];
@@ -1192,7 +1197,7 @@
       b.classList.toggle('on', b.dataset.src === 'mix');
     });
     var ra = el('resAudio');
-    if (name !== (window.__dqLastJobSong || '')) {
+    if (stripExt(name) !== stripExt(window.__dqLastJobSong || '')) {
       /* 历史歌：只要它还有鼓声音频成品，就把「鼓声」轨接回来（跟着练的核心参照） */
       if (ra.dataset.songName !== name) {
         ra.removeAttribute('src');
@@ -1234,6 +1239,13 @@
     if (st.layout && st.colsBad > Math.max(3, st.bars.length * 0.35)) {
       el('dqWarn').textContent = '⚠ 这份 PDF 的音符列与谱面数据不完全一致，播放头在这首里只能近似对齐' +
         '（其他歌不受影响）。重新扒一次这首歌通常就好了。';
+      el('dqWarn').hidden = false;
+    }
+    /* 管线自校验明确判定时间线未对齐（render.aligned=false，即 |最终音频时长-(span+t0)|>0.25s）：
+       以服务端结论为准直接告警。此前前端只靠浏览器量出来的粗阈值（2s）兜底，
+       偏差落在 0.25s~2s 之间时后端已判未对齐、前端却静默，光标悄悄漂移却不提醒。 */
+    if (el('dqWarn').hidden && st.aligned === false) {
+      el('dqWarn').textContent = '⚠ 这份谱面的时间线与音频没对上（管线自检未通过），动态谱光标可能超前或滞后。重新扒一次这首歌通常就好了。';
       el('dqWarn').hidden = false;
     }
     if (st.layout) { renderPdf(); paintPdf(); } else {
@@ -1310,7 +1322,7 @@
         if (window.dqToast) window.dqToast(w1, true);      /* 卡片是隐藏的，警戒条看不见，必须同时提示 */
         return;
       }
-      setHist(name !== st.jobSong, name);    /* 打开的就是本次结果时不算"看历史" */
+      setHist(stripExt(name) !== stripExt(st.jobSong || ''), name);    /* 打开的就是本次结果时不算"看历史" */
       syncCardVisibility();
       if (window.dqShowView) window.dqShowView('done');    /* 扒谱页的结果卡就是这首歌的成品页 */
       if (st.practice) enterPractice();

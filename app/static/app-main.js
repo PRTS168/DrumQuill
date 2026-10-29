@@ -57,6 +57,7 @@
   var curStage = 0;
   var setupPending = false;
   var setupLogSeq = 0, setupTimer = null, setupCompsData = [];
+  var setupLoadTries = 0;   /* openSetup 在组件状态接口失败时的退避计数，防零间隔无限递归 */
   var toastTimer = null;
   var dismissedKey = null;   /* 用户点了「再扒一首」后，不再弹回同一个已结束任务 */
 
@@ -206,9 +207,12 @@
       if(j.status === 'ready' && !wasReady && typeof loadSetupStatus === 'function'){
         loadSetupStatus();   /* GPU 探测结果会影响"能力/组件"列表，刷新一次 */
       }
-      if(j.status !== 'ready' && attempt < 15) setTimeout(function(){ pollGpu(attempt+1); }, 1500);
+      if(j.status !== 'ready'){
+        /* 前 15 次（约 22s）快轮询；GPU 冷启动可能更慢，之后降频长重试，别让芯片永远卡在"检测中" */
+        setTimeout(function(){ pollGpu(attempt < 15 ? attempt + 1 : 15); }, attempt < 15 ? 1500 : 10000);
+      }
     }).catch(function(){
-      if(attempt < 15) setTimeout(function(){ pollGpu(attempt+1); }, 2000);
+      setTimeout(function(){ pollGpu(attempt < 15 ? attempt + 1 : 15); }, attempt < 15 ? 2000 : 10000);
     });
   }
 
@@ -511,9 +515,15 @@
     /* 音频是第二产物：鼓声轨喂给播放器的「鼓声」音源 */
     if(hasAudio){
       var src = '/api/download?kind=audio&song='+encodeURIComponent(s.song)+'&preview=1';
-      var au = $('#resAudio');
-      if(au.getAttribute('src') !== src) au.src = src;
-      window.__dqJobAudio = src;          /* 去过别的谱再回来，鼓声轨还能接上 */
+      /* 正在用另一首的鼓声练习/试听时，别把正在放的音源强行换掉、也别覆盖"本次任务鼓声"引用
+         （队列连跑多首：上一首还在练，下一首完成瞬间不该打断播放） */
+      var ps = window.__dq && window.__dq.st;
+      var busyOther = !!(ps && ps.song && stripExt(ps.song) !== stripExt(s.song) && (ps.practice || ps.playing));
+      if(!busyOther){
+        var au = $('#resAudio');
+        if(au.getAttribute('src') !== src) au.src = src;
+        window.__dqJobAudio = src;          /* 去过别的谱再回来，鼓声轨还能接上 */
+      }
     }else{
       $('#resAudio').removeAttribute('src');
       window.__dqJobAudio = '';
@@ -646,12 +656,29 @@
   }
 
   /* ================= 轮询 ================= */
+  var pollFails = 0;
+  function dqSetDisconnect(on){
+    var b = document.getElementById('dqDisconnect');
+    if(on){
+      if(!b){
+        b = document.createElement('div');
+        b.id = 'dqDisconnect';
+        b.style.cssText = 'position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:120;background:#8e2b24;color:#fff;font-size:12.5px;padding:8px 14px;border-radius:10px;box-shadow:var(--sh-float)';
+        b.textContent = '与本地服务的连接已断开，正在自动重试…';
+        document.body.appendChild(b);
+      }
+    }else if(b){ b.remove(); }
+  }
   function poll(){
     fetch('/api/status').then(function(r){ return r.json(); }).then(function(s){
+      pollFails = 0; dqSetDisconnect(false);
       applyStatus(s);
     }).catch(function(){
-      /* 服务不通时不要每次弹提示，仅置灰；骨架屏要换成可重试的提示 */
+      /* 服务不通时不要每次弹提示，仅置灰；连续失败再挂一条可自动恢复的断连横幅，
+         否则运行视图永远停在"进行中"，分不清是真在跑还是服务挂了 */
+      pollFails++;
       setMark('bad');
+      if(pollFails >= 3) dqSetDisconnect(true);
       var box = $('#history');
       if(box && !box.querySelector('.hrow')){
         box.innerHTML = '<div class="empty">读取失败<br><span class="hint">点「刷新」重试</span></div>';
@@ -769,6 +796,11 @@
       .then(function(j){
         if(!j.ok){ toast('删除失败：'+(j.error||''), true); return; }
         toast('已删除 '+(j.removed||[]).length+' 个文件');
+        /* 删掉的正是当前在练/试听的这首：把谱面与播放器一起卸掉，否则光标/进度条还指着已删除的文件 */
+        try{
+          var cur = window.__dq && window.__dq.st && window.__dq.st.song;
+          if(cur && stripExt(cur) === stripExt(base) && window.dqHidePlayer) window.dqHidePlayer();
+        }catch(e){}
         loadHistory();
       }).catch(function(e){ toast('删除失败：'+e, true); });
   }
@@ -1039,14 +1071,20 @@
   }
 
   function saveSettings(){
-    var body = {};
+    var body = {}; var badNum = null;
     SET_FIELDS.forEach(function(f){
       var el = document.getElementById('cfg_'+f[0]);
       if(!el) return;
       var v = el.value.trim();
       if(f[3] === 'bool'){ body[f[0]] = (v === 'true'); }
-      else { body[f[0]] = (v === '') ? '' : (f[3]==='number' ? Number(v) : v); }
+      else if(f[3] === 'number'){
+        if(v === ''){ body[f[0]] = ''; }
+        else if(!isFinite(Number(v))){ badNum = f[1]; }   /* 非数字：别让 NaN 序列化成 null 无声落库 */
+        else body[f[0]] = Number(v);
+      }
+      else { body[f[0]] = v; }
     });
+    if(badNum){ $('#cfgMsg').textContent = ''; toast('设置未保存：「'+badNum+'」需要填数字', true); return; }
     $('#cfgMsg').textContent = '保存中…';
     fetch('/api/config', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) })
       .then(function(r){ return r.json(); })
@@ -1174,9 +1212,24 @@
     if(!setupInfo){
       if(window.dqOpenSetup) window.dqOpenSetup(); else show($('#setupModal'));
       $('#setupMsg').textContent = '正在读取组件状态…';
-      loadSetupStatus(function(){ openSetup(manual, resume); });
+      setupLoadTries++;
+      loadSetupStatus(function(info){
+        if(info){ setupLoadTries = 0; openSetup(manual, resume); return; }
+        /* 组件状态接口持续失败（服务异常 / 非 JSON 响应）时退避重试；超过次数不再递归，
+           把界面落到可读的失败态 + 重试按钮，而不是永远卡在"正在读取组件状态…"。 */
+        if(setupLoadTries < 3){ setTimeout(function(){ openSetup(manual, resume); }, 900); return; }
+        setupLoadTries = 0;
+        var note = $('#setupNote');
+        if(note) note.textContent = '读取组件状态失败（本地服务暂时无响应）。请确认程序已正常启动后再重试。';
+        show($('#setupStep1')); hide($('#setupStep2')); hide($('#setupStep3'));
+        var again = $('#setupStartBtn');
+        if(again){ again.hidden = false; again.disabled = false; again.textContent = '重试'; again.onclick = function(){ openSetup(manual, resume); }; }
+        var done = $('#setupDoneBtn'); if(done) done.hidden = true;
+        var back = $('#setupBackBtn'); if(back) back.hidden = true;
+      });
       return;
     }
+    setupLoadTries = 0;
     $('#setupTitle').textContent = manual ? '安装 / 修复组件' : (setupPending ? '首次使用，先装组件' : '安装向导');
     $('#setupNote').innerHTML = manual
       ? '已就绪的组件默认不勾选；想强制重装就勾上。'
@@ -1307,7 +1360,6 @@
     }).then(function(r){ return r.json(); });
     p.then(function(j){
       if(!j.ok){ $('#setupMsg').textContent = '启动失败：'+(j.error||''); $('#setupStartBtn').disabled = false; return; }
-      setupInstallingIds = j.components || list;
       hide($('#setupStep1')); show($('#setupStep2')); hide($('#setupStep3'));
       $('#setupStartBtn').hidden = true; $('#setupDoneBtn').hidden = true; $('#setupBackBtn').hidden = true;
       $('#setupLog').textContent = '';
@@ -1318,7 +1370,6 @@
       pollSetup();
     }).catch(function(e){ $('#setupMsg').textContent = '启动失败：'+e; $('#setupStartBtn').disabled = false; });
   }
-  var setupInstallingIds = [];
   var setupSawRunning = false;
   var setupInstallAt = 0;
 
@@ -1450,10 +1501,19 @@
   $('#devSwitch').addEventListener('click', function(e){
     var btn = e.target.closest('button');
     if(!btn || btn.disabled) return;
-    devPref = (btn.dataset.dev === 'gpu') ? 'cuda' : btn.dataset.dev;
-    renderEngine();
+    var prev = devPref;
+    var chosen = (btn.dataset.dev === 'gpu') ? 'cuda' : btn.dataset.dev;
+    devPref = chosen;
+    renderEngine();   /* 即时反馈：按钮先切过去 */
     fetch('/api/config', { method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ demucsDevice: devPref }) }).catch(function(){});
+      body: JSON.stringify({ demucsDevice: chosen }) })
+      .then(function(r){ return r.json().then(function(j){ return {s:r.status, j:j}; }); })
+      .then(function(res){
+        if(res.j && res.j.ok) return;
+        /* 后端拒绝（任务运行中返回 409 等）：回滚高亮并提示，别让用户以为切成功了、下次轮询才悄悄回弹 */
+        devPref = prev; renderEngine();
+        toast('设备切换未生效：'+((res.j && res.j.error) || ('HTTP '+res.s))+'（已保持 '+devLabel(prev)+'）', true);
+      }).catch(function(){ devPref = prev; renderEngine(); toast('设备切换请求失败，已保持 '+devLabel(prev), true); });
   });
 
   /* 历史/产物按钮（事件委托，避免文件名里的引号把 inline handler 打断） */

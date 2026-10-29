@@ -55,10 +55,12 @@
       var n = (document.getElementById('pickedName') || {}).textContent || '';
       if (!n) { toast('先选一首歌', true); return; }
       var opt = pickModeBpm();
-      api('/api/queue', {action: 'add', songs: [n], mode: opt.mode, bpm: opt.bpm}).then(function () {
+      api('/api/queue', {action: 'add', songs: [n], mode: opt.mode, bpm: opt.bpm}).then(function (j) {
+        if (!j || !j.ok) { toast('加入队列失败：' + ((j && j.error) || '请求失败'), true); return; }
+        toast(j.added > 0 ? ('已加入队列：' + n) : '未加入（文件不存在或已在队列中）', j.added > 0 ? false : true);
         refresh();
         if (window.dqShellShow) window.dqShellShow('queue');
-      });
+      }).catch(function (e) { toast('加入队列请求失败：' + e, true); });
     };
   }
 
@@ -113,17 +115,34 @@
       var n = (document.getElementById('pickedName') || {}).textContent || '';
       if (!n) { toast('先到「新建扒谱」选一首歌', true); return; }
       var opt = pickModeBpm();
-      api('/api/queue', {action: 'add', songs: [n], mode: opt.mode, bpm: opt.bpm}).then(function () {
+      api('/api/queue', {action: 'add', songs: [n], mode: opt.mode, bpm: opt.bpm}).then(function (j) {
+        if (!j || !j.ok) { toast('加入队列失败：' + ((j && j.error) || '请求失败'), true); return; }
+        toast(j.added > 0 ? ('已加入队列：' + n) : '未加入（文件不存在或已在队列中）', j.added > 0 ? false : true);
         refresh();
         if (window.dqShellShow) window.dqShellShow('queue');
-      });
+      }).catch(function (e) { toast('加入队列请求失败：' + e, true); });
     };
     var pa = document.getElementById('dqPause');
-    if (pa) pa.onclick = function () { api('/api/queue', {action: q.paused ? 'resume' : 'pause'}).then(refresh); };
+    if (pa) pa.onclick = function () {
+      api('/api/queue', {action: q.paused ? 'resume' : 'pause'}).then(function (j) {
+        if (!j || !j.ok) { toast((q.paused ? '继续队列' : '暂停队列') + '失败：' + ((j && j.error) || ''), true); return; }
+        refresh();
+      }).catch(function () {});
+    };
     var cl = document.getElementById('dqClear');
-    if (cl) cl.onclick = function () { api('/api/queue', {action: 'clear'}).then(refresh); };
+    if (cl) cl.onclick = function () {
+      api('/api/queue', {action: 'clear'}).then(function (j) {
+        if (!j || !j.ok) { toast('清空队列失败：' + ((j && j.error) || ''), true); return; }
+        refresh();
+      }).catch(function () {});
+    };
     Array.prototype.forEach.call(box.querySelectorAll('[data-dqrm]'), function (b) {
-      b.onclick = function () { api('/api/queue', {action: 'remove', song: b.getAttribute('data-dqrm')}).then(refresh); };
+      b.onclick = function () {
+        api('/api/queue', {action: 'remove', song: b.getAttribute('data-dqrm')}).then(function (j) {
+          if (!j || !j.ok) { toast('移除失败：' + ((j && j.error) || ''), true); return; }
+          refresh();
+        }).catch(function () {});
+      };
     });
   }
 
@@ -170,7 +189,10 @@
           } else if (a.kind === 'rerun') {
             var body = a.body || {};
             body.song = st && st.song;
-            api('/api/start', body).then(refresh);
+            api('/api/start', body).then(function (j) {
+              if (!j || !j.ok) { toast('重试启动失败：' + ((j && j.error) || ''), true); return; }
+              refresh();
+            }).catch(function () {});
           }
         };
         row.appendChild(b);
