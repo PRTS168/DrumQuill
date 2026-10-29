@@ -14,8 +14,24 @@ import numpy as np
 import pretty_midi
 
 if len(sys.argv) < 3:
-    print("usage: midi_to_wav.py <in.mid> <out.wav> [bpm] [gain]")
+    print("usage: midi_to_wav.py <in.mid> <out.wav> [bpm] [gain] [--min-dur <秒>]")
     sys.exit(2)
+# 可选命名参数：--min-dur <秒> —— 网格跨度。最后一个音符常在网格末端之前
+# （结尾休止/渐弱），按「最后音符+1s」合成会比网格短，拼接前奏后总长对不上
+# 谱面时间线（前端 checkAlign 会误报）。传网格跨度即可用静音补齐到网格末端。
+# 用命名参数而非位置参数：位置序列易错位（曾把 span 当 gain，MIN_DUR 恒为 0）。
+# 必须先于 BPM/GAIN 位置解析摘除：否则 "--min-dur" 会被当成 gain 触发 ValueError。
+MIN_DUR = 0.0
+_argv = list(sys.argv)
+if "--min-dur" in _argv:
+    _i = _argv.index("--min-dur")
+    try:
+        MIN_DUR = max(0.0, float(_argv[_i + 1]))
+    except (ValueError, IndexError):
+        print("警告：--min-dur 参数无效，忽略尾部补齐。", file=sys.stderr)
+        MIN_DUR = 0.0
+    del _argv[_i:_i + 2]
+    sys.argv = _argv
 MIDI = sys.argv[1]
 OUT = sys.argv[2]
 try:
@@ -24,15 +40,6 @@ try:
 except ValueError:
     print("usage: midi_to_wav.py <in.mid> <out.wav> [bpm] [gain]（bpm/gain 需为数字）")
     sys.exit(2)
-# 可选第 5 参：最小输出时长（秒）——网格跨度。最后一个音符常在网格末端之前
-# （结尾休止/渐弱），按「最后音符+1s」合成会比网格短，拼接前奏后总长对不上
-# 谱面时间线（前端 checkAlign 会误报）。传网格跨度即可用静音补齐到网格末端。
-MIN_DUR = 0.0
-if len(sys.argv) > 5:
-    try:
-        MIN_DUR = max(0.0, float(sys.argv[5]))
-    except ValueError:
-        MIN_DUR = 0.0
 SR = 44100
 
 try:

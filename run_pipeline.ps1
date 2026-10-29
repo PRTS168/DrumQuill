@@ -558,7 +558,7 @@ if ($SkipAudio) {
             $pjS = Get-Content $planJson -Raw -Encoding UTF8 | ConvertFrom-Json
             foreach ($bS in $pjS.bars) { $spanForSynth += ([double]$bS.end - [double]$bS.start) }
         } catch { $spanForSynth = 0.0 }
-        & $venvPy (Join-Path $scrDir "midi_to_wav.py") $alMid $wav $BPM $spanForSynth
+        & $venvPy (Join-Path $scrDir "midi_to_wav.py") $alMid $wav $BPM --min-dur $spanForSynth
         if ($LASTEXITCODE -eq 0 -and (Test-Path $wav)) { $wavMade = $true }
         else { Write-Host "[!] 音频合成失败（exit $LASTEXITCODE），跳过音频。" }
     }
@@ -582,7 +582,7 @@ if ($SkipAudio) {
                     if ($dR -gt 0 -and ([Math]::Abs($dR - $spanR) -gt 0.25)) {
                         Write-Host ("[!] 渲染时长 {0:N2}s 与网格 {1:N2}s 偏差超 0.25s —— 改用内置合成器重渲（网格精确）。" -f $dR, $spanR)
                         $wav2 = Join-Path $outDir "tmp_exact.wav"
-                        & $venvPy (Join-Path $scrDir "midi_to_wav.py") $alMid $wav2 $BPM $spanR | Out-Null
+                        & $venvPy (Join-Path $scrDir "midi_to_wav.py") $alMid $wav2 $BPM --min-dur $spanR | Out-Null
                         if ($LASTEXITCODE -eq 0 -and (Test-Path $wav2)) {
                             $dR2 = 0.0
                             try { $dR2 = [double](& $ffp2.Source -v error -show_entries format=duration -of default=nw=1:nk=1 $wav2 2>$null) } catch { $dR2 = 0.0 }
