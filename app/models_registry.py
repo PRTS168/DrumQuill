@@ -17,7 +17,12 @@ import threading
 
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 FBAI_ROOT = "https://dl.fbaipublicfiles.com/demucs/"
-HF_MIRROR = "https://hf-mirror.com/adefossez/{repo}/resolve/main/{fname}"
+# 经 HEAD 实测验证的镜像第二源（2026-10-30：200 且 Content-Length 与 _FILE_BYTES 逐字节一致）。
+# 旧版曾写死 adefossez/{repo} 模板：实测全部 404（那些仓库只发 .safetensors，没有 .th），
+# htdemucs_6s / mdx_extra 的仓库则 401 私有。只有 htdemucs_ft 在 dokodesuka/ 下有全套原 .th。
+_MIRROR_URLS = {
+    "htdemucs_ft": "https://hf-mirror.com/dokodesuka/htdemucs_ft/resolve/main/{fname}",
+}
 
 # 内置可下载模型（id -> 元数据）。files 来自 demucs/remote/files.txt
 BUILTIN = {
@@ -261,9 +266,14 @@ def _size_ok(size, want_bytes):
     return want_bytes > 0 and abs(size - want_bytes) <= want_bytes * SIZE_TOLERANCE
 
 
-def _http_download(url, out_path, log, label, timeout=120):
-    """单源下载，支持 Range 断点续传，每 20MB 报一次进度。返回 (ok, size)。"""
+def _http_download(url, out_path, log, label, timeout=120, _allow_416=True):
+    """单源下载，支持 Range 断点续传，每 20MB 报一次进度。返回 (ok, size)。
+
+    残片 >= 远端文件实际长度时服务器回 416（Range Not Satisfiable）：带着残片
+    每次请求都 416，所有源都会失败、只能手动删文件。遇到 416 先清残片再整段重下一次。
+    """
     import urllib.request
+    import urllib.error
     have = os.path.getsize(out_path) if os.path.isfile(out_path) else 0
     req = urllib.request.Request(url, headers={"User-Agent": "DrumQuill/1.0"})
     if have:
@@ -287,6 +297,17 @@ def _http_download(url, out_path, log, label, timeout=120):
                     last_report = have
                     log("      … %.0f MB" % (have / 1048576.0))
         return True, os.path.getsize(out_path)
+    except urllib.error.HTTPError as e:
+        if e.code == 416 and _allow_416 and os.path.isfile(out_path):
+            log("      … 残片超出远端长度（416），清残片整段重下")
+            try:
+                os.remove(out_path)
+            except OSError:
+                pass
+            return _http_download(url, out_path, log, label, timeout=timeout,
+                                  _allow_416=False)
+        log("      ✗ %s: %s" % (label, str(e)[:140]))
+        return False, os.path.getsize(out_path) if os.path.isfile(out_path) else 0
     except Exception as e:
         log("      ✗ %s: %s" % (label, str(e)[:140]))
         return False, have
@@ -357,6 +378,9 @@ def download_model(root, cfg, name, log=print):
         for fname in todo:
             out = os.path.join(dirp, fname)
             urls = [FBAI_ROOT + meta["root"] + "/" + fname]
+            mirror = _MIRROR_URLS.get(name)
+            if mirror:
+                urls.append(mirror.format(fname=fname))
             if not _download_file(urls, out, _expected_bytes(fname), log, fname):
                 log("✗ %s 下载失败（网络问题？已装的模型不受影响）" % fname)
                 return False
@@ -410,30 +434,35 @@ def verify_model(root, cfg, name, log=print):
 
 
 def delete_model(root, cfg, name, log=print):
-    """删除某个非默认模型的权重（省空间）。htdemucs 是兜底，不允许删。"""
-    if name in ("htdemucs",):
-        log("默认模型 htdemucs 不能删（删了就没法分离）")
-        return False
-    meta = BUILTIN.get(name)
-    dirp = models_dir(root, cfg)
-    if not meta:
-        log("未知模型：%s" % name)
-        return False
-    for f in meta["files"]:
-        p = os.path.join(dirp, f)
+    """删除某个非默认模型的权重（省空间）。htdemucs 是兜底，不允许删。
+
+    与 download_model 共用 _LOCK：删除进行中的权重不能被同时下载，
+    否则「删了一半又被续传回来」会造成 yaml 与权重不一致。
+    """
+    with _LOCK:
+        if name in ("htdemucs",):
+            log("默认模型 htdemucs 不能删（删了就没法分离）")
+            return False
+        meta = BUILTIN.get(name)
+        dirp = models_dir(root, cfg)
+        if not meta:
+            log("未知模型：%s" % name)
+            return False
+        for f in meta["files"]:
+            p = os.path.join(dirp, f)
+            try:
+                if os.path.isfile(p):
+                    os.remove(p)
+            except Exception as e:
+                log("删除失败 %s: %s（文件被占用？）" % (f, e))
         try:
-            if os.path.isfile(p):
-                os.remove(p)
-        except Exception as e:
-            log("删除失败 %s: %s" % (f, e))
-    try:
-        y = os.path.join(dirp, name + ".yaml")
-        if os.path.isfile(y):
-            os.remove(y)
-    except Exception:
-        pass
-    log("已删除 %s 的权重文件" % meta["label"])
-    return True
+            y = os.path.join(dirp, name + ".yaml")
+            if os.path.isfile(y):
+                os.remove(y)
+        except Exception:
+            pass
+        log("已删除 %s 的权重文件" % meta["label"])
+        return True
 
 
 if __name__ == "__main__":

@@ -78,9 +78,13 @@ $SIZE_BEATS_CKPT = 81058141
 $BEATS_URLS = @("https://cloud.cp.jku.at/public.php/dav/files/7ik4RrBKTS273gp/final0.ckpt")
 
 # 内置 pip 依赖清单（requirements.txt 不存在时使用）
+# 内置兜底清单：仅当仓库缺 requirements.txt 时使用，口径对齐 requirements.txt
+# （去掉版本 pin、去掉 adtof 的 git VCS 行——ADTOF 由本脚本源码分支单独装）
 $PIP_PKGS = @(
     "torch", "demucs", "librosa", "pretty_midi", "numpy", "scipy", "soundfile",
-    "flask", "requests", "cairosvg", "svglib", "reportlab", "pywebview", "matplotlib"
+    "flask", "Werkzeug", "requests", "cairosvg", "svglib", "reportlab",
+    "pywebview", "matplotlib", "mido", "audioread", "pymupdf", "lxml",
+    "einops", "julius", "lameenc", "PyYAML", "tqdm", "beat_this"
 )
 
 # 以 base64 方式安全执行 venv Python 片段（避开 PS5.1 原生命令行吞双引号问题）
@@ -116,6 +120,11 @@ function Add-Status { param([string]$Component, [string]$State, [string]$Source,
 
 $script:missingCount = 0
 $script:failedCount  = 0
+# 可选组件（Demucs 权重 / Beat This / MuseScore / sf3 / ffmpeg）失败不进 failedCount：
+# 这些在 installer.py COMPONENTS 里 required=False，缺了有兜底（整曲转录/固定速度/
+# 内置渲染/WAV）。把它们当 fatal 会让普通家用机（无 choco）首装必以 exit 2 中止，
+# 拖放入口根本走不到 run_pipeline。
+$script:manualCount  = 0
 
 function SayOfflineManual { param([string]$Title, [string[]]$Urls, [string]$DestPath, [string]$SizeNote = "")
     Write-Host "  [离线模式] 缺失: $Title"
@@ -196,7 +205,8 @@ if (-not $venvOk) {
 Write-Host "`n[2/6] 检查 Python 依赖..."
 # cairosvg 需要原生 cairo 库（libcairo-2.dll），缺失时项目内有 render_fallback.py 兜底，按可选处理
 $IMPORT_LIST = @("torch","demucs","librosa","pretty_midi","numpy","scipy","soundfile",
-                 "flask","requests","svglib","reportlab","webview","matplotlib","adtof_pytorch","beat_this")
+                 "flask","requests","svglib","reportlab","webview","matplotlib","mido",
+                 "adtof_pytorch","beat_this")
 $OPT_IMPORTS = @("cairosvg")
 $missingImports = @()
 $missingOpt = @()
@@ -248,10 +258,17 @@ if (-not $venvPy) {
                     -MaxTimeSec 600 -ManualGuideName "ADTOF-pytorch 源码包") {
                 $ext = Join-Path $env:TEMP "adtof_src"
                 if (Test-Path $ext) { Remove-Item $ext -Recurse -Force }
-                Expand-Archive -Path $zipPath -DestinationPath $ext -Force
-                $sub = Get-ChildItem $ext -Directory | Select-Object -First 1
-                Write-Host "  pip install 源码目录: $($sub.FullName)"
-                if (-not (Invoke-PipInstall -PipArgs @($sub.FullName) -TimeoutSec 30)) {
+                # 下载链给的可能是损坏 zip（截断/镜像错误页）：Expand-Archive 在 EAP=Stop 下
+                # 抛错会把整个安装器连同汇总表一起炸死，必须兜住并计入失败。
+                try {
+                    Expand-Archive -Path $zipPath -DestinationPath $ext -Force -ErrorAction Stop
+                    $sub = Get-ChildItem $ext -Directory | Select-Object -First 1
+                    Write-Host "  pip install 源码目录: $($sub.FullName)"
+                    if (-not (Invoke-PipInstall -PipArgs @($sub.FullName) -TimeoutSec 30)) {
+                        $script:failedCount++
+                    }
+                } catch {
+                    Write-Host "  [错误] ADTOF 源码包解压/安装失败: $($_.Exception.Message)"
                     $script:failedCount++
                 }
                 Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
@@ -281,7 +298,7 @@ if (-not $venvPy) {
         $still = @(($probe2 | Select-Object -Last 1) -split "\s+" | Where-Object { $_ })
         if ($still.Count -eq 0) {
             Write-Host "  依赖安装完成"
-            Add-Status "pip 依赖" "已安装" "清华镜像 + ADTOF 源码"
+            Add-Status "pip 依赖" "已安装" "多镜像自动回退 + ADTOF 源码"
         } else {
             Write-Host "  [错误] 仍无法 import: $($still -join ', ')"
             $script:failedCount++
@@ -318,7 +335,12 @@ if ($demOk) {
         if ($ok) {
             Set-Content -Path $demYml -Value "models: ['955717e8']" -Encoding ASCII
             Add-Status "Demucs 权重" "已下载" $demDir
-        } else { $script:failedCount++; Add-Status "Demucs 权重" "失败" "-" }
+        } else {
+            # 可选：缺权重时 run_pipeline 有「整曲直接转录」兜底，不算 fatal
+            $script:manualCount++
+            Write-Host "  [提示] Demucs 权重未下载完：不影响扒谱，分离精度降级；可在设置页补装。"
+            Add-Status "Demucs 权重" "需手动" "-"
+        }
     }
 }
 
@@ -346,9 +368,11 @@ if ($btOk) {
                   -ExpectedSize $SIZE_BEATS_CKPT -MaxTimeSec 3600 -ManualGuideName "Beat This 权重（约77MB）"
         if ($ok) { Add-Status "Beat This 权重" "已下载" $btDir }
         else {
+            # 可选：按全曲固定速度记谱有兜底。旧逻辑 missingCount++ 会让 install.ps1 以
+            # exit 1 结束，拖放入口（一键扒谱.bat if errorlevel 1）连带中止——但主流程本可继续。
             Write-Host "  [提示] Beat This 权重未下载完：不影响扣谱，谱面按全曲固定速度记；"
             Write-Host "         可稍后在设置页点「补装」继续（支持断点续传）。"
-            $script:missingCount++
+            $script:manualCount++
             Add-Status "Beat This 权重" "未完成(可补装)" "-"
         }
     }
@@ -421,8 +445,9 @@ if ($mscoreExe) {
             }
         }
         if (-not $mscoreExe) {
+            # 可选：有内置渲染兜底（reportlab 直绘 PDF），不进 failedCount
             Write-Host "  [提示] 自动安装失败（可能需要管理员权限）。请手动到 https://musescore.org/en/download 下载安装 MuseScore 4.x。"
-            $script:failedCount++
+            $script:manualCount++
         }
         Add-Status "MuseScore 4" $(if ($mscoreExe) { "已安装" } else { "需手动" }) $(if ($mscoreExe) { $mscoreExe } else { "musescore.org" })
     }
@@ -449,8 +474,9 @@ if ($sf3Ok) {
             Copy-Item $sf3Src $sf3Path -Force
             $sf3Ok = Test-FileSizeOK -Path $sf3Path -ExpectedSize $SIZE_SF3
         } else {
+            # 可选：当前流程合成鼓声不依赖 sf3（内置合成器/MuseScore）
             Write-Host "  [提示] 未在 MuseScore 目录找到 MS Basic.sf3，请手动安装 MuseScore 后重跑本脚本。"
-            $script:failedCount++
+            $script:manualCount++
         }
         Add-Status "MS Basic.sf3" $(if ($sf3Ok) { "已复制" } else { "需手动" }) $(if ($sf3Ok) { $sf3Src } else { "-" })
     }
@@ -523,27 +549,41 @@ if ($ffmpegExe) {
             }
         }
         if ($ffmpegExe) { Add-Status "ffmpeg" "已安装" $ffLocal }
-        else { $script:failedCount++; Add-Status "ffmpeg" "失败" "npmmirror" }
+        else {
+            # 可选：缺 ffmpeg 时鼓声保存为 WAV 而非 MP3，主流程不受影响
+            $script:manualCount++
+            Add-Status "ffmpeg" "需手动" "npmmirror"
+        }
     }
 }
 
 # ---------------- 汇总 ----------------
 Write-Host "`n==================== 依赖就绪表 ===================="
 $script:status | Format-Table -AutoSize | Out-String | Write-Host
-Write-Host ("缺失 {0} 项，安装失败 {1} 项" -f $script:missingCount, $script:failedCount)
+Write-Host ("缺失 {0} 项，安装失败 {1} 项，可选组件待手动 {2} 项" -f $script:missingCount, $script:failedCount, $script:manualCount)
 
 if ($CheckOnly) {
-    if ($script:missingCount -eq 0 -and $script:failedCount -eq 0) { Write-Host "结论: 全部就绪"; exit 0 }
+    if ($script:missingCount -eq 0 -and $script:failedCount -eq 0 -and $script:manualCount -eq 0) {
+        Write-Host "结论: 全部就绪"; exit 0
+    }
     Write-Host "结论: 存在缺失项"; exit 1
 }
+# exit 2 只留给「必需组件（venv/核心依赖/ADTOF 转录引擎）没装上」：
+# 可选组件（Demucs/Beat/MuseScore/sf3/ffmpeg）有兜底，失败不得阻塞主流程，
+# 否则普通家用机首装（无 choco）必然 exit 2，拖放入口永远走不到 run_pipeline。
 if ($script:failedCount -gt 0) {
-    Write-Host "结论: 有组件未能自动装好，请按上方 [需要手动下载] 指引处理后重跑本脚本。"
+    Write-Host "结论: 必需组件未能自动装好，请按上方 [需要手动下载] 指引处理后重跑本脚本。"
     exit 2
 }
 if ($script:missingCount -gt 0) {
     Write-Host "结论: 仍有缺失项（可能是离线模式或跳过开关）。"
     if ($Offline) { exit 2 }
     exit 1
+}
+if ($script:manualCount -gt 0) {
+    Write-Host "结论: 主依赖已就绪，可以扒谱；有可选组件未自动装好（见上表「需手动/未完成」行），"
+    Write-Host "      不影响主流程，可稍后在设置页补装。"
+    exit 0
 }
 Write-Host "结论: 全部依赖就绪，可以启动（运行 bootstrap\ensure.ps1 -Launch）。"
 exit 0

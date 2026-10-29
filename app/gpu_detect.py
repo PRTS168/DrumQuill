@@ -163,25 +163,27 @@ def pick_backend(gpus):
     else:
         prefer = ["cu128", "cu126", "cu124", "cu121"]
 
-    # 2) 再按驱动能力裁剪（CUDA 13 的驱动向下兼容 12.x，直接放开）
-    note = ""
+    # 2) 再按驱动能力裁剪（CUDA 13 的驱动向下兼容 12.x，直接放开）。
+    # 注意两种 %s 语义不同：「未能读取驱动版本」里的 %s 要填索引 tag，
+    # 「驱动 %s 过旧」里的 %s 要填驱动版本号——上一版用同一个条件分发，
+    # 把「驱动 cu118 过旧」这种错误文案打给用户。
     if not driver:
         prefer = ["cu121", "cu118"]          # 连驱动版本都拿不到 → 保守
-        note = "；未能读取驱动版本，按保守方案选 %s"
+        suffix = lambda tag: "；未能读取驱动版本，按保守方案选 %s" % tag
     elif driver_cuda is None:
         prefer = ["cu118"]                   # 驱动太老（<11.8 要求）→ 只留最老索引
-        note = "；驱动 %s 过旧，建议升级 NVIDIA 驱动后再装 GPU 组件"
+        suffix = lambda tag: "；驱动 %s 过旧，建议升级 NVIDIA 驱动后再装 GPU 组件" % driver
     else:
         cap = float(driver_cuda)
         limit = 99.0 if cap >= 13.0 else cap
         prefer = [t for t in prefer if float(t[2:]) / 10.0 <= limit + 1e-9] or ["cu118"]
+        suffix = lambda tag: ""
 
     for tag in prefer:
         min_cc = dict(_TORCH_INDEX)[tag]
         if cc >= min_cc:
             why = "计算能力 %d.%d / 驱动 %s → %s" % (cc[0], cc[1], driver or "未知", tag)
-            if note:
-                why += note % (tag if "%s" in note else (driver,))
+            why += suffix(tag)
             return {"ok": True, "index_url": _TORCH_INDEX_BASE + tag, "tag": tag,
                     "feature": "%d.%d" % cc, "driver": driver,
                     "driver_cuda": driver_cuda, "name": g["name"],

@@ -23,7 +23,7 @@ $port = 8756
 if (Test-Path $CFG_PATH) {
     try {
         $cfg = Get-Content $CFG_PATH -Raw -Encoding UTF8 | ConvertFrom-Json
-        if ($cfg.port) { $port = [int]$cfg.port }
+        try { if ($cfg.port) { $port = [int]$cfg.port } } catch { $port = 8756 }   # 坏配置文件端口非数字不能弄死 ensure
         if ($cfg.venvDir) { $venvDirCfg = $cfg.venvDir }
     } catch {}
 }
@@ -44,21 +44,42 @@ function Test-Ready {
     }
     if (-not $venvPy) { return @{ Block = @("venv 不存在"); Warn = @() } }
 
-    # 关键 import（快速探针）
+    # 关键 import（快速探针）。清单对齐 installer.py PIP_KEY_IMPORTS 与
+    # install.ps1 IMPORT_LIST——pip 半途失败的经典残留态（缺 numpy/soundfile/mido 等）
+    # 以前探针查不出来，ensure 报「就绪」、管线跑到中途才炸。
     $_eap = $ErrorActionPreference
     $ErrorActionPreference = "Continue"   # PS5.1：stderr 重定向的原生调用写 stderr 即终止
-    $miss = & $venvPy -c @"
-import importlib
+    $probeOut = & $venvPy -c @"
+import importlib, os
 miss=[]
-for m in ['torch','demucs','adtof_pytorch','librosa','flask']:
+for m in ['torch','demucs','beat_this','librosa','pretty_midi','numpy','scipy','soundfile','flask','requests','mido']:
     try: importlib.import_module(m)
     except Exception: miss.append(m)
-print(' '.join(miss))
+print('MISS:'+' '.join(miss))
+try:
+    import adtof_pytorch
+    w=os.path.join(os.path.dirname(adtof_pytorch.__file__),'data','adtof_frame_rnn_pytorch_weights.pth')
+    print('ADTOFW:'+('ok' if os.path.isfile(w) and os.path.getsize(w)>1000000 else 'missing'))
+except Exception:
+    print('ADTOFW:missing')
 "@ 2>$null
     $ErrorActionPreference = $_eap
-    $miss = ($miss | Select-Object -Last 1)
-    if ($miss.Trim()) { $block += "Python 包缺失: $miss" }
+    # 探针无输出（解释器崩溃/torch 段错误）时不能当成「包齐全」——也不能再
+    # 对 $null 调 .Trim()（旧逻辑在 EAP=Stop 下直接把脚本弄死）。
+    $missLine = @($probeOut | Where-Object { $_ -match "^MISS:" } | Select-Object -Last 1)
+    if ($missLine.Count -eq 0) {
+        $block += "venv Python 探针无响应（解释器/依赖损坏，需重跑安装）"
+    } else {
+        $miss = ($missLine[0] -replace "^MISS:","").Trim()
+        if ($miss) { $block += "Python 包缺失: $miss" }
+    }
 
+    # ADTOF 转录权重（Block：包已装但权重缺失的半装态，跑管线必炸；
+    # 拖放链会经 install.ps1 [4/6] 自动补齐 3.6MB 权重）
+    $adtofLine = @($probeOut | Where-Object { $_ -match "^ADTOFW:" } | Select-Object -Last 1)
+    if ($adtofLine.Count -gt 0 -and $adtofLine[0] -match "missing") {
+        $block += "ADTOF 转录权重缺失"
+    }
     # Demucs 权重（可选，首次运行可下载）
     if (-not (Test-Path (Join-Path $ROOT "models\demucs_local\955717e8-8726e21a.th"))) {
         $warn += "Demucs 权重缺失（首次运行可自动下载，分离质量降级）"

@@ -12,7 +12,7 @@ app/installer.py — 组件安装器（引导页 / 设置重装共用）。
   sf3      MS Basic.sf3 音色库（从 MuseScore 安装目录复制）
 
 运行方式：后台线程执行，进度写入全局 STATE，前端轮询 /api/setup/progress。
-所有下载：多源镜像链 + 断点续传 + 大小校验；pip 一律走清华镜像；
+所有下载：多源镜像链 + 断点续传 + 大小校验；pip 多镜像自动回退（腾讯→阿里→清华→中科大→官方）；
 绝不动系统 Python 的任何包（只建独立 venv / 在 venv 内装包）。
 """
 import json
@@ -199,9 +199,13 @@ def _read_config(root):
 
 
 def _write_config(root, cfg):
+    # 原子写：先写临时文件再 os.replace，中途崩溃不会留下半截 config.json
+    # （损坏后 _read_config 静默当空配置，会触发全套重装）。
     p = os.path.join(root, "config.json")
-    with open(p, "w", encoding="utf-8") as f:
+    tmp = p + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(cfg, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, p)
 
 
 def _find_system_python(root=None):
@@ -598,6 +602,32 @@ def _download(urls, out_path, expect=0, max_sec=1800, label=""):
                 _append_log("  ✓ 下载完成 (%s bytes)" % os.path.getsize(out_path))
                 return True
             _append_log("  ✗ 大小校验失败，尝试下一源")
+        except urllib.error.HTTPError as e:
+            if e.code == 416 and os.path.exists(out_path):
+                # Range Not Satisfiable：本地残片 >= 远端实际长度（远端文件变小/残片损坏）。
+                # 不清残片的话带 Range 每次都 416。不能只 continue：urls 可能只有一个源，
+                # continue 会直接结束循环——必须用同一 URL 原地整段重下一次。
+                _append_log("  残片超出远端文件大小（416），清除残片后整段重下")
+                try:
+                    os.remove(out_path)
+                except OSError:
+                    pass
+                try:
+                    with urllib.request.urlopen(urllib.request.Request(url), timeout=max_sec) as resp:
+                        with open(out_path, "wb") as f:
+                            while True:
+                                chunk = resp.read(1 << 16)
+                                if not chunk:
+                                    break
+                                f.write(chunk)
+                    if _file_ok(out_path, expect):
+                        _append_log("  ✓ 下载完成 (%s bytes)" % os.path.getsize(out_path))
+                        return True
+                    _append_log("  ✗ 整段重下后校验仍失败，尝试下一源")
+                except Exception as e2:
+                    _append_log("  ✗ 整段重下失败: %s" % str(e2)[:160])
+            else:
+                _append_log("  ✗ 下载失败: %s" % str(e)[:160])
         except Exception as e:
             _append_log("  ✗ 下载失败: %s" % str(e)[:160])
         partial = os.path.exists(out_path)
@@ -623,9 +653,15 @@ def run_install(root, cfg, components, dry_run=False):
         STATE["started_at"] = time.time()
         STATE["dry_run"] = dry_run
         _append_log("开始安装（共 %d 项，dry_run=%s）" % (total, dry_run))
+        by_id = {c["id"]: c for c in COMPONENTS}
         try:
             for i, cid in enumerate(components):
-                comp = next(c for c in COMPONENTS if c["id"] == cid)
+                comp = by_id.get(cid)
+                if comp is None:
+                    # 未知组件 id：跳过并记日志，别让 next() 抛 StopIteration 被外层
+                    # 吞成一句泛化「安装异常」
+                    _append_log("  [跳过] 未知组件 id: %s" % cid)
+                    continue
                 _set_step(i, total, comp["name"], comp["desc"])
                 # 每轮重新解析：装完 venv 之后 pip/adtof 才能拿到 venv 里的 python，
                 # 否则同一批选中「venv + pip」时 pip 会一直报“venv 未就绪”。
@@ -684,7 +720,6 @@ def _install_one(cid, root, cfg, venv_py, dry_run):
             _append_log("  venv 未就绪，跳过依赖安装")
             return False
         # 1) adtof 源码（不在 PyPI）
-        probe = "import importlib;print(1) if importlib.import_module('adtof_pytorch') else print(0)"
         r = subprocess.run([venv_py, "-c", "import adtof_pytorch"], capture_output=True, creationflags=CREATE_NO_WINDOW, text=True, timeout=30)
         if r.returncode != 0:
             _append_log("  安装 ADTOF 源码包（GitHub 加速链）...")
@@ -696,17 +731,18 @@ def _install_one(cid, root, cfg, venv_py, dry_run):
                 import zipfile
                 try:
                     with zipfile.ZipFile(zip_p) as zf:
+                        # zip-slip 防护：第三方代理 zip 若含 .. 或绝对路径条目，拒绝解压
+                        ext_abs = os.path.abspath(ext)
+                        for name in zf.namelist():
+                            target = os.path.abspath(os.path.join(ext, name))
+                            if target != ext_abs and not target.startswith(ext_abs + os.sep):
+                                raise ValueError("zip 含越界条目: %s" % name)
                         zf.extractall(ext)
                     subs = [os.path.join(ext, d) for d in os.listdir(ext)]
                     src = subs[0] if subs else None
                     if src:
-                        rr = subprocess.run([venv_py, "-m", "pip", "install", src,
-                                             "-i", PYPI_MIRROR, "--timeout", "30"],
-                                            capture_output=True, creationflags=CREATE_NO_WINDOW, text=True, timeout=600)
-                        if rr.returncode == 0:
-                            _append_log("  ✓ ADTOF 源码安装完成")
-                        else:
-                            _append_log("  ✗ pip 装 ADTOF 失败: %s" % (rr.stderr or "")[:200])
+                        if not _pip_install(venv_py, [src], timeout=600, what="ADTOF 源码"):
+                            _append_log("  ✗ pip 装 ADTOF 失败（所有镜像均不可用）")
                 except Exception as e:
                     _append_log("  ✗ 解压/安装失败: %s" % str(e)[:200])
                 finally:
@@ -860,7 +896,14 @@ def _install_one(cid, root, cfg, venv_py, dry_run):
             cfg["ffmpegPath"] = dst
             _write_config(root, cfg)
             return True
-        _append_log("  ✗ ffmpeg 文件校验失败")
+        # 校验失败必须删 dst 残片：否则下一轮 _find_ffmpeg 见到「已存在」就直接
+        # 报 ffmpeg 已就绪（实际是 HTML 错误页/截断文件），mp3 功能永久坏且状态显示成功。
+        try:
+            if os.path.exists(dst):
+                os.remove(dst)
+        except OSError:
+            pass
+        _append_log("  ✗ ffmpeg 文件校验失败（已清除残片，重跑可重下）")
         return False
 
     if cid == "mscore":

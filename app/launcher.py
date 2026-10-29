@@ -135,8 +135,17 @@ def load_config():
         return {}
 
 
+def _parse_port(cfg):
+    """config.json 的 port 字段非数字/越界时回退 8756——不能让 import 本模块即抛 ValueError。"""
+    try:
+        p = int(cfg.get("port") or 8756)
+        return p if 1 <= p <= 65535 else 8756
+    except (TypeError, ValueError):
+        return 8756
+
+
 CFG = load_config()
-DEFAULT_PORT = int(CFG.get("port") or 8756)
+DEFAULT_PORT = _parse_port(CFG)
 FALLBACK_PORT = DEFAULT_PORT + 1
 
 
@@ -524,7 +533,12 @@ def main():
         if owner:
             pid, name, cmd = owner
             log("port %d occupied by pid=%d name=%s cmd=%r" % (port, pid, name, cmd))
-            is_ours = ("pythonw" in (name or "").lower()) and ("app.py" in (cmd or "").lower())
+            # 只看「pythonw + app.py」会把别的工作区 pythonw 跑它自己 app.py 误判为残留杀掉；
+            # 必须同时命中本项目 app.py 的绝对路径。
+            app_marker = os.path.normcase(os.path.abspath(APP_PY))
+            is_ours = ("pythonw" in (name or "").lower()) and \
+                ("app.py" in (cmd or "").lower()) and \
+                app_marker in os.path.normcase(cmd or "")
             if is_ours:
                 log("occupant looks like a stale app.py -> killing")
                 kill_tree(pid)

@@ -43,7 +43,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -52,12 +52,17 @@ exe = EXE(
     entitlements_file=None,
     icon=[ICON] if os.path.isfile(ICON) else None,
 )
+# 发行说明：本产物是「exe + loose app\ 源码目录」结构——app.py / installer.py /
+# gpu_detect.py / models_registry.py 以源码形式随包分发，不进 bundle；拷贝时必须
+# 连同 app\、bootstrap\、scripts\、.venv\、runtime\ 一起分发，单独拷 exe 无法工作。
 coll = COLLECT(
     exe,
     a.binaries,
     a.datas,
     strip=False,
-    upx=True,
+    # upx=True 会显著提高杀软误报率（本地工具被 UPX 压缩是常见启发式特征）；
+    # 体积换误报不值得，默认关。需要更小体积时手动改回 True。
+    upx=False,
     upx_exclude=[],
     name="DrumQuill",
 )

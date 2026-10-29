@@ -17,7 +17,11 @@ function Test-FileSizeOK {
     param([string]$Path, [long]$ExpectedSize, [double]$Tolerance = 0.02)
     if (-not (Test-Path $Path)) { return $false }
     $len = (Get-Item $Path).Length
-    if ($ExpectedSize -le 0) { return $true }
+    if ($ExpectedSize -le 0) {
+        # 大小未知的下载（ffmpeg.gz 等）：0 字节占位/失败残留绝不能算「已存在且大小正常」
+        # （与 installer.py _file_ok 的 size<=0 语义对齐）
+        return ($len -gt 0)
+    }
     $lo = [long]($ExpectedSize * (1 - $Tolerance))
     $hi = [long]($ExpectedSize * (1 + $Tolerance))
     return ($len -ge $lo -and $len -le $hi)
@@ -55,6 +59,18 @@ function Invoke-DownloadOne {
             # 失败留下的 0 字节占位文件删掉（真正的半截数据保留，供 -C - 续传）
             Write-Host "    [清理] 本次尝试失败，删除 0 字节残留: $OutFile"
             Remove-Item $OutFile -Force -ErrorAction SilentlyContinue
+        }
+
+        # 416 Range Not Satisfiable（curl exit 33）：残片已 >= 远端文件实际长度
+        # （远端文件变小/残片损坏）。不清残片则带 -C - 永远 416，2 次重试内全源失败。
+        if ($partial -and $code -eq 33) {
+            Write-Host "    [提示] 服务器拒绝续传区间（416），清除残片后整段重新下载。"
+            Remove-Item $OutFile -Force -ErrorAction SilentlyContinue
+            & $curl -L --fail --connect-timeout 15 --max-time $MaxTimeSec -sS -# -o $OutFile $Url
+            $code = $LASTEXITCODE
+            if ($code -ne 0 -and (Test-Path $OutFile) -and (Get-Item $OutFile).Length -eq 0) {
+                Remove-Item $OutFile -Force -ErrorAction SilentlyContinue
+            }
         }
 
         if ($code -eq 0 -and (Test-FileSizeOK -Path $OutFile -ExpectedSize $ExpectedSize)) {
