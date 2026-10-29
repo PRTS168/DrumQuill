@@ -24,6 +24,15 @@ try:
 except ValueError:
     print("usage: midi_to_wav.py <in.mid> <out.wav> [bpm] [gain]（bpm/gain 需为数字）")
     sys.exit(2)
+# 可选第 5 参：最小输出时长（秒）——网格跨度。最后一个音符常在网格末端之前
+# （结尾休止/渐弱），按「最后音符+1s」合成会比网格短，拼接前奏后总长对不上
+# 谱面时间线（前端 checkAlign 会误报）。传网格跨度即可用静音补齐到网格末端。
+MIN_DUR = 0.0
+if len(sys.argv) > 5:
+    try:
+        MIN_DUR = max(0.0, float(sys.argv[5]))
+    except ValueError:
+        MIN_DUR = 0.0
 SR = 44100
 
 try:
@@ -43,6 +52,7 @@ except Exception:
 if est > 0:
     BPM = est
 duration = max(n.end for inst in pm.instruments for n in inst.notes) + 1.0
+duration = max(duration, MIN_DUR)   # 尾部静音补齐到网格末端（若网格更长）
 # 超长曲保护：合成缓冲约需 duration*44100*20 字节（float64 主缓冲 + np.roll 副本
 # + int16 交错，约 0.85 MB/秒）。30 分钟以上的预览音频对本地工具已无意义且逼近
 # 内存上限，按通用时长上限提前拒绝（与具体歌曲无关），避免 MemoryError 裸崩。

@@ -552,7 +552,13 @@ if ($SkipAudio) {
         if (-not $wavMade) { Write-Host "[!] MuseScore 音频渲染未产出 WAV，改用 numpy 合成器。" }
     }
     if (-not $wavMade) {
-        & $venvPy (Join-Path $scrDir "midi_to_wav.py") $alMid $wav $BPM
+        # 网格跨度（供 midi_to_wav 尾部静音补齐，合成总长=网格跨度）
+        $spanForSynth = 0.0
+        try {
+            $pjS = Get-Content $planJson -Raw -Encoding UTF8 | ConvertFrom-Json
+            foreach ($bS in $pjS.bars) { $spanForSynth += ([double]$bS.end - [double]$bS.start) }
+        } catch { $spanForSynth = 0.0 }
+        & $venvPy (Join-Path $scrDir "midi_to_wav.py") $alMid $wav $BPM $spanForSynth
         if ($LASTEXITCODE -eq 0 -and (Test-Path $wav)) { $wavMade = $true }
         else { Write-Host "[!] 音频合成失败（exit $LASTEXITCODE），跳过音频。" }
     }
