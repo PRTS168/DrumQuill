@@ -592,7 +592,9 @@ if ($SkipAudio) {
                     }
                     $dF = 0.0
                     try { $dF = [double](& $ffp2.Source -v error -show_entries format=duration -of default=nw=1:nk=1 $wav 2>$null) } catch { $dF = 0.0 }
-                    $renderAligned = ($dF -gt 0 -and ([Math]::Abs($dF - $spanR) -le 1.5))
+                    # 口径统一：dF 是拼接后总长（含前奏 t0），与期望总长（spanR + t0v）比对——
+                    # 此前拿总长与 spanR 直接比（差一个前奏 11s），导致 aligned 恒 false、前端恒警告。
+                    $renderAligned = ($dF -gt 0 -and ([Math]::Abs($dF - ($spanR + $t0v)) -le 1.5))
                     # duration 语义 = 最终交付音频（拼接前奏后）的总时长：前奏 t0 + 合成段 dF。
                     # 前端 checkAlign 以此与 span+t0 比对，才是对最终文件的真校验。
                     $durFinal = if ($t0v -gt 0.5) { $dF + $t0v } else { $dF }
