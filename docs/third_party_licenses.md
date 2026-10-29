@@ -28,7 +28,7 @@
 - 官网：https://musescore.org ；本工具只在命令行调用 `MuseScore4.exe`
   完成 MusicXML→PDF 与 MIDI→音频渲染，**未链接/修改 MuseScore 源码，不构成衍生作品**。
 - 因此本工具整体无需按 GPL-3.0 开源；用户机器上需自行安装 MuseScore 4（免费）。
-- 未安装 MuseScore 时管线自动回退到自带 SVG→PDF 渲染，不强制依赖它。
+- 未安装 MuseScore 时管线自动回退到内置渲染器（reportlab 直绘 PDF，不经过 SVG→PDF 转换）。
 
 ## 4. MS Basic.sf3 音色库 —— MIT
 

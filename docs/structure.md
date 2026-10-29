@@ -26,7 +26,10 @@ DrumQuill/
 │   └── start_server.ps1         源码模式启动脚本
 ├── scripts/                     管线各步骤
 │   ├── detect_bpm.py            ① 速度检测
+│   ├── track_beats.py           ② Beat This 拍点/强拍跟踪
+│   ├── choose_bpm.py             速度八度校验与精细拟合
 │   ├── transcribe.py            ③ 鼓点转录（逐类阈值 + 力度）
+│   ├── align_to_beats.py        按真实拍点对齐音符到十六分格
 │   ├── fix_tempo_tick.py        ④ 写入 BPM 与 tick 精度
 │   ├── fix_align.py             ④ 相位对齐 + 软量化
 │   ├── gen_musicxml.py          ④ 生成 MusicXML

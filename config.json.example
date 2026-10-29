@@ -18,7 +18,8 @@
   // 首次运行由 bootstrap\install.ps1 自动创建 <仓库根>\.venv。
   "venvDir": "C:\\Users\\<你的用户名>\\venvs\\drum-ai",
 
-  // Demucs htdemucs 本地权重目录（含 *.th 权重与 htdemucs.yaml）。
+  // Demucs htdemucs 本地权重目录。注册表实际扫描的是其下的 demucs_local 子目录
+  // （即 <modelsDir>\demucs_local，内含 *.th 权重与 htdemucs.yaml）。
   // 缺省 <仓库根>\models；缺失时 install.ps1 会自动下载（约 84 MB，走镜像）。
   "modelsDir": "C:\\<仓库根>\\models",
 
@@ -32,7 +33,7 @@
 
   // MuseScore 4 命令行程序路径（用于 MusicXML->PDF 与音频渲染）。
   // 缺省自动探测 "C:\\Program Files\\MuseScore 4\\bin\\MuseScore4.exe"；
-  // 未安装时管线自动回退到自带 SVG->PDF 渲染（见 docs\fallback_matrix.md）。
+  // 未安装时管线自动回退到内置渲染器（reportlab 直绘 PDF，见 docs\fallback_matrix.md）。
   "museScorePath": "C:\\Program Files\\MuseScore 4\\bin\\MuseScore4.exe",
 
   // ffmpeg 可执行文件路径（用于 WAV->MP3）。缺省按 PATH 查找；
@@ -70,6 +71,25 @@
   // GPU 分离段长（秒，整数；htdemucs 上限 7.8 所以取 7）。显存紧张可降到 4。
   "gpuSegment": 7,
 
+  // ADTOF 转录引擎源码目录（仅在「直接用源码运行」时需要）。
+  // 缺省自动探测 <仓库根>\adtof-pytorch；venv 内已 pip 安装 adtof_pytorch 时此项可留空。
+  "adtofDir": "",
+
+  // 转录阈值：五类鼓（底鼓/军鼓/嗵鼓/踩镲/吊镲）的灵敏度，逗号分隔 5 个 0~1 的数。
+  // 留空（默认）= 按当前分离模型取实测最优值；数量不对或越界会自动回退默认。
+  // 例："0.22,0.20,0.40,0.22,0.34"
+  "adtofThresholds": "",
+
   // 自动测 BPM 失败时使用的兜底速度（用户也可在网页手动填）。
   "bpmFallback": 120
+  // ----- 以下为进阶键，全部可缺省（不写即默认值），日常无需配置 -----
+  // "demucsModel": "htdemucs",          // 分离模型：htdemucs / htdemucs_ft / htdemucs_6s / mdx_extra
+  // "mode": "full",                      // 作业模式：full / score / audio / stems
+  // "songsDir" / "midisDir" / "outputDir" / "stemsDir"：四个产物子目录的独立覆盖，
+  //   缺省都在 dataDir 下。
+  // "postDedupeMs": 50,                  // 去抖去重窗口（毫秒），0 = 关闭
+  // "postMinLenMs": 30,                  // 最短时值（毫秒），0 = 关闭
+  // "postSwing": 0,                      // 摇摆量化 0~0.6，0 = 关闭
+  // "bpmSanity": true,                   // 是否做速度八度校验（推荐 true）
+  // "quantizeTol": 0.25,                 // 量化吸附容差（占十六分音符比例），0 = 不量化
 }

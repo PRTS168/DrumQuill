@@ -205,6 +205,52 @@ def test_midi_to_wav_unknown_pitch_only_ok(tmp_path):
     assert dst.exists() and dst.stat().st_size > 10000
 
 
+# ---------- midi_to_wav：--min-dur 命名参数契约（638107e 修复回归） ----------
+
+def test_midi_to_wav_min_dur_extracted_before_positionals(tmp_path):
+    # 638107e：--min-dur 必须先于 BPM/GAIN 位置解析摘除。旧实现按位置读参，
+    # "--min-dur" 会被当成 out.wav 路径而解析失败（span 曾被误当 gain）。
+    src = write_midi(tmp_path / "short.mid", [(38, 0.0, 100)])
+    dst = tmp_path / "o.wav"
+    r = run_script(MIDI2WAV, src, "--min-dur", "5.0", dst, 120)
+    assert r.returncode == 0, r.stderr
+    with wave.open(str(dst), "rb") as w:
+        # duration = max(音符结束 + 1.0, MIN_DUR) = max(1.125, 5.0) = 5.0s
+        assert abs(w.getnframes() / 44100.0 - 5.0) < 0.1
+
+def test_midi_to_wav_min_dur_pads_short_note_to_grid_span(tmp_path):
+    # 命名参数放在位置序列尾部（管线调用形态：in out bpm --min-dur span）
+    src = write_midi(tmp_path / "short.mid", [(38, 0.0, 100)])
+    dst = tmp_path / "o.wav"
+    r = run_script(MIDI2WAV, src, dst, 120, "--min-dur", "5.0")
+    assert r.returncode == 0, r.stderr
+    with wave.open(str(dst), "rb") as w:
+        assert abs(w.getnframes() / 44100.0 - 5.0) < 0.1
+
+def test_midi_to_wav_min_dur_omitted_keeps_one_sec_tail(tmp_path):
+    # 对照：不传 --min-dur 时 duration = 最后音符结束 + 1.0s（与单音用例同口径）
+    src = write_midi(tmp_path / "short.mid", [(38, 0.0, 100)])
+    dst = tmp_path / "o.wav"
+    r = run_script(MIDI2WAV, src, dst, 120)
+    assert r.returncode == 0, r.stderr
+    with wave.open(str(dst), "rb") as w:
+        assert 44000 <= w.getnframes() <= 50000
+
+def test_midi_to_wav_gain_scales_output_level(tmp_path):
+    # 第 4 位置参数 = gain：峰值归一化后线性缩放输出电平（覆盖 gain 调用形态）
+    import numpy as np
+    src = write_midi(tmp_path / "g.mid", [(35, 0.0, 100)])
+    peaks = []
+    for g in ("1.0", "0.2"):
+        dst = tmp_path / ("g_%s.wav" % g)
+        r = run_script(MIDI2WAV, src, dst, 120, g)
+        assert r.returncode == 0, r.stderr
+        with wave.open(str(dst), "rb") as w:
+            data = np.frombuffer(w.readframes(w.getnframes()), dtype="<i2")
+        peaks.append(int(np.abs(data).max()))
+    assert 4.0 < peaks[0] / max(peaks[1], 1) < 6.0
+
+
 # ---------- render_fallback notes[-1] 回归：最晚小节按最大起音时间 ----------
 
 @pytest.mark.skipif(not _HAS_REPORTLAB, reason="render_fallback 需要 reportlab（可选兑底渲染器），环境缺失时跳过")

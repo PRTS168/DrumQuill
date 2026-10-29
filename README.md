@@ -14,7 +14,7 @@
 <a href="https://github.com/PRTS168/DrumQuill/actions/workflows/test.yml"><img alt="test" src="https://github.com/PRTS168/DrumQuill/actions/workflows/test.yml/badge.svg?branch=main" /></a>
 <img alt="downloads" src="https://img.shields.io/github/downloads/PRTS168/DrumQuill/total?style=flat-square&color=0f766e" />
 <img alt="license" src="https://img.shields.io/badge/license-MIT-334155?style=flat-square" />
-<img alt="python" src="https://img.shields.io/badge/python-3.9%2B-3776ab?style=flat-square" />
+<img alt="python" src="https://img.shields.io/badge/python-3.10%2B-3776ab?style=flat-square" />
 
 <img alt="PDF 鼓谱" src="docs/images/badges/pdf-first.svg" />
 <img alt="本地离线" src="docs/images/badges/offline.svg" />
@@ -93,7 +93,7 @@
 所有数字都在一台 4 线程 CPU + 4GB 显存显卡的机器上测得，可复现；测试脚本随仓库提供
 （`build_work` 下的实验脚本不随发布包分发）。
 
-代码入库已通过持续集成：GitHub Actions 在 Windows 上跑完 152 项自动化用例与静态检查（[查看运行记录](https://github.com/PRTS168/DrumQuill/actions/workflows/test.yml)）。
+代码入库已通过持续集成：GitHub Actions 在 Windows 上跑完 198 项自动化用例与静态检查（[查看运行记录](https://github.com/PRTS168/DrumQuill/actions/workflows/test.yml)）。
 
 ### 1. 节奏对齐：三首歌、同一套代码、零逐曲参数
 
@@ -217,7 +217,7 @@
 
 **方式二：源码运行**
 
-需要 Windows 与 Python 3.9+。
+需要 Windows 与 Python 3.10+（NumPy 2.2 要求 3.10 起）。
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File bootstrap\ensure.ps1   # 检查并安装依赖
