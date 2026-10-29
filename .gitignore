@@ -64,3 +64,9 @@ markers.txt
 # ---- 评测数据（本机下载，不入库）----
 eval/
 .e2e/
+
+# ---- 运行时锁文件与缓存（复审轮补）----
+app/.queue.lock
+.pytest_cache/
+.ruff_cache/
+.review-fragments/
