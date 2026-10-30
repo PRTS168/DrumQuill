@@ -21,7 +21,7 @@
   }
   window.dqSyncCard = syncCardVisibility;
   var st = {
-    song: '', bars: [], layout: null, page: 1, zoom: 'fit', src: 'mix',
+    song: '', bars: [], layout: null, page: 1, zoom: 'fit', src: 'drum',
     key: '', playing: false, explicit: false, cols: [], pageHold: 0, failAt: 0,
     rate: 1, loop: { a: null, b: null, on: false, repeat: 0, count: 0 },
     practice: false, countIn: 0
@@ -1160,6 +1160,14 @@
   }
 
   /* 历史歌的鼓声轨：产物里有音频成品就接上（/api/download kind=audio 的兑底顺序与结果页一致） */
+  /* 默认听「鼓声」轨：拼接鼓谱音频与谱面网格同源（管线按同一拍点网格生成，
+     总长与跨度机器验证 0 偏差），动态谱光标与鼓声严格同步。原曲轨的鼓声进入点
+     依赖拍点检测精度，实测可与谱面起点差 1s 级（血液型网格 11.34s vs 原曲鼓声
+     12.5s 进入）——「没等鼓声出来光标就先走」的根因。有鼓声成品的歌默认鼓声轨。 */
+  function defaultDrumSrc() {
+    var ra = el('resAudio');
+    if (ra && ra.getAttribute('src')) { st.src = 'drum'; syncSrcButtons(); }
+  }
   function attachDrumTrack(name) {
     var ra = el('resAudio');
     if (!ra) return;
@@ -1171,6 +1179,7 @@
         if (has && st.song === name) {
           ra.dataset.songName = name;
           ra.setAttribute('src', '/api/download?kind=audio&song=' + encodeURIComponent(name));
+          defaultDrumSrc();          /* 历史歌异步确认鼓声轨可用：默认源升为鼓声轨 */
           syncSrcButtons();
         }
       }).catch(function () {});
@@ -1191,7 +1200,9 @@
     var mix = el('dqAudio');
     var want = '/api/source?song=' + encodeURIComponent(name);
     if (mix.getAttribute('src') !== want) mix.setAttribute('src', want);
-    /* 音源选回原曲；鼓声轨属于「本次任务」，看历史时清掉，免得播上一首的鼓声 */
+    /* 先回原曲轨做兜底：鼓声轨可用性在下面确认（本次任务同步 / 历史歌异步），
+       确认可用后 defaultDrumSrc() 会把默认源切到「鼓声」——与谱面网格同源，
+       光标与鼓声严格同步（原曲轨鼓声进入点依赖检测精度，可能差 1s 级）。 */
     st.src = 'mix';
     Array.prototype.forEach.call(document.querySelectorAll('#dqSrc button'), function (b) {
       b.classList.toggle('on', b.dataset.src === 'mix');
@@ -1211,6 +1222,7 @@
       ra.dataset.songName = name;
     }
     syncSrcButtons();                     /* 换歌后「鼓声」按钮的可用性跟着变 */
+    defaultDrumSrc();                     /* 本次任务结果：鼓声轨同步就绪，默认源升为鼓声轨 */
     disp.x = null; disp.bar = -1; disp.last = 0;
     bindAudio(mix);
     bindAudio(el('resAudio'));
